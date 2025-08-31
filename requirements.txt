@@ -1,0 +1,9 @@
+yfinance==0.2.65
+kafka-python==2.2.0  
+pymongo==4.6.0  
+boto3==1.28.57    
+python-dotenv==1.0.1  
+pandas==2.2.2        
+numpy==1.26.4        
+prefect==3.4.0
+pyspark==3.5.6

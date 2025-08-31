@@ -1,0 +1,5 @@
+.env
+notebooks
+data
+docker
+src/__pycache__
