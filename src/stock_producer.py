@@ -1,134 +1,62 @@
-import os
-from bson import json_util
-import yfinance as yf
-from prefect import flow, task, get_run_logger
 from kafka import KafkaProducer
-from time import sleep
+import json
+import os
 import pandas as pd
+from prefect import flow, task, get_run_logger
 
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")  
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "stock_prices")
-TICKERS = ["TLKM.JK"]
-BATCH_SIZE = 1
-
-@task(retries=3, retry_delay_seconds=10)
-def fetch_yahoo_data(tickers: list):
-    logger = get_run_logger()
-    logger.info(f"Fetching data for tickers: {tickers}")
-    
-    try:
-        data = yf.download(
-            tickers=tickers,
-            period="1d",
-            interval="1d",
-            group_by="ticker",
-            auto_adjust=False,
-            threads=True,
-        )
-        
-        if data.empty:
-            logger.warning("No data returned from yfinance")
-            return []
-            
-    except Exception as e:
-        logger.error(f"Failed to download data: {e}")
-        return []
-    
-    records = []
-    
-    # Process each ticker
-    for ticker in tickers:
-        try:
-            # Handle MultiIndex columns or regular columns
-            if isinstance(data.columns, pd.MultiIndex):
-                # MultiIndex case - columns are like ('TLKM.JK', 'Open')
-                if ticker in data.columns.levels[0]:
-                    df = data[ticker]
-                else:
-                    logger.warning(f"Ticker {ticker} not found in MultiIndex data")
-                    continue
-            else:
-                # Single level columns case
-                df = data
-            
-            if df.empty:
-                logger.warning(f"No data for {ticker}")
-                continue
-                
-            # Check if we have the required columns
-            required_columns = ["Open", "High", "Low", "Close", "Volume"]
-            missing_columns = [col for col in required_columns if col not in df.columns]
-            
-            if missing_columns:
-                logger.error(f"Missing columns for {ticker}: {missing_columns}")
-                logger.info(f"Available columns: {list(df.columns)}")
-                continue
-                
-            latest = df.iloc[-1]
-            record = {
-                "ticker": ticker,
-                "date": pd.to_datetime(latest.name).to_pydatetime(),
-                "open": float(latest["Open"]) if pd.notna(latest["Open"]) else 0.0,
-                "high": float(latest["High"]) if pd.notna(latest["High"]) else 0.0,
-                "low": float(latest["Low"]) if pd.notna(latest["Low"]) else 0.0,
-                "close": float(latest["Close"]) if pd.notna(latest["Close"]) else 0.0,
-                "volume": int(latest["Volume"]) if pd.notna(latest["Volume"]) else 0,
-            }
-            records.append(record)
-            logger.info(f"Successfully processed {ticker}")
-            
-        except Exception as e:
-            logger.error(f"Failed to process {ticker}: {e}")
-            logger.info(f"Data shape: {data.shape}, Columns: {list(data.columns)}")
-    
-    logger.info(f"Fetched {len(records)} records")
-    return records
+def get_kafka_producer(bootstrap_servers: str):
+    """Create Kafka producer with JSON serializer"""
+    return KafkaProducer(
+        bootstrap_servers=bootstrap_servers,
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+    )
 
 @task
-def publish_to_kafka(records: list):
+def load_weekly_data(file_path: str):
+    """Load weekly stock data for multiple tickers"""
     logger = get_run_logger()
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        raise FileNotFoundError(file_path)
     
-    try:
-        producer = KafkaProducer(
-            bootstrap_servers=KAFKA_BROKER,
-            value_serializer=lambda v: json_util.dumps(v).encode("utf-8")
-        )
-        
-        for record in records:
-            producer.send(KAFKA_TOPIC, value=record)
-            logger.info(f"Published {record['ticker']} to Kafka")
-            
-        producer.flush()
-        producer.close()
-        logger.info("All records published and Kafka connection closed.")
-        
-    except Exception as e:
-        logger.error(f"Failed to publish to Kafka: {e}")
-        raise
+    if file_path.endswith(".csv"):
+        df = pd.read_csv(file_path)
+    elif file_path.endswith(".json"):
+        df = pd.read_json(file_path)
+    else:
+        raise ValueError("Unsupported file format (only csv/json allowed)")
+    
+    if "ticker" not in df.columns:
+        raise ValueError("CSV/JSON must have 'ticker' column")
+    
+    logger.info(f"Loaded {len(df)} records, {df['ticker'].nunique()} tickers from {file_path}")
+    return df.to_dict(orient="records")
+
+
+@task
+def push_to_kafka(records: list, topic: str, bootstrap_servers: str):
+    """Send records to Kafka, grouped by ticker"""
+    logger = get_run_logger()
+    producer = get_kafka_producer(bootstrap_servers)
+
+    count = 0
+    for record in records:
+        ticker = record.get("ticker", "UNKNOWN")
+        producer.send(topic, key=ticker.encode("utf-8"), value=record)
+        count += 1
+    
+    producer.flush()
+    logger.info(f"✅ Sent {count} records to Kafka topic: {topic}")
 
 @flow(name="stock-producer-flow")
-def stock_producer_flow():
-    logger = get_run_logger()
-    all_records = []
-    
-    for i in range(0, len(TICKERS), BATCH_SIZE):
-        batch = TICKERS[i:i+BATCH_SIZE]
-        logger.info(f"Processing batch: {batch}")
-        
-        records = fetch_yahoo_data(batch)
-        if records:
-            all_records.extend(records)
-            publish_to_kafka(records)
-        else:
-            logger.warning(f"No records fetched for batch: {batch}")
-            
-        if i + BATCH_SIZE < len(TICKERS):  # Don't sleep after the last batch
-            sleep(5)
-       
-    if not all_records:
-        logger.warning("No records fetched in this run.")
-    else:
-        logger.info(f"Successfully processed {len(all_records)} total records")
+def stock_producer_flow(
+    file_path: str = "data/yfinance_weekly.csv",
+    topic: str = "stock_prices",
+    bootstrap_servers: str = "localhost:9092"
+):
+    """Prefect flow for producing stock data into Kafka"""
+    records = load_weekly_data(file_path)
+    push_to_kafka(records, topic, bootstrap_servers)
 
 if __name__ == "__main__":
     stock_producer_flow()

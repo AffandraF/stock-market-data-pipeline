@@ -2,36 +2,42 @@
 from prefect import flow, task, get_run_logger
 from stock_producer import stock_producer_flow
 from stock_consumer import stock_consumer_flow
+from extract import extract_historical_flow
+from transform_load import transform_load_flow
 import subprocess
 import os
 
-# =========================
-# Producer Flow
-# =========================
+# 1. Producer (push ke Kafka)
 @flow(name="daily-stock-producer")
 def scheduled_stock_producer():
     stock_producer_flow()
 
-# =========================
-# Consumer Flow
-# =========================
+# 2. Consumer (ambil dari Kafka + simpan Bronze ke MinIO)
 @flow(name="daily-stock-consumer")
 def scheduled_stock_consumer():
     stock_consumer_flow()
 
-# =========================
-# Spark Transform Flow
-# =========================
+# 3. Load historical CSV
+@flow(name="daily-historical-extractor")
+def scheduled_historical_extractor():
+    extract_historical_flow()
+
+# 4. Gold Layer (transformasi teknikal)
+@flow(name="daily-transform-load")
+def scheduled_transform_load():
+    transform_load_flow()
+
+
 @task
-def run_spark_job():
+def run_spark_job(script_name: str):
     logger = get_run_logger()
     spark_master_url = "spark://spark:7077"
-    transform_script = "/opt/prefect/src/transform.py"
+    script_path = f"/opt/prefect/src/{script_name}"
 
     # Pastikan script ada
-    if not os.path.exists(transform_script):
-        logger.error(f"❌ Transform script not found: {transform_script}")
-        raise FileNotFoundError(f"{transform_script} not found")
+    if not os.path.exists(script_path):
+        logger.error(f"❌ Transform script not found: {script_path}")
+        raise FileNotFoundError(f"{script_path} not found")
 
     try:
         logger.info("🚀 Starting Spark transformation job...")
@@ -42,10 +48,15 @@ def run_spark_job():
                 "--master", spark_master_url,
                 "--deploy-mode", "client",
                 "--packages",
-                "org.apache.hadoop:hadoop-aws:3.3.4,"
-                "com.amazonaws:aws-java-sdk-bundle:1.12.767,"
-                "org.mongodb.spark:mongo-spark-connector_2.12:10.3.0",
-                transform_script
+                (
+                    "org.apache.hadoop:hadoop-aws:3.3.4,"
+                    "com.amazonaws:aws-java-sdk-bundle:1.12.767,"
+                    "io.delta:delta-core_2.12:2.4.0,"
+                    "io.delta:delta-storage:2.4.0,"
+                    "org.postgresql:postgresql:42.7.3,"
+                    "org.mongodb.spark:mongo-spark-connector_2.12:10.3.0"
+                ),
+                script_path
             ],
             capture_output=True,
             text=True,
@@ -63,10 +74,6 @@ def run_spark_job():
         logger.error(e.stderr)
         raise
 
-@flow(name="daily-stock-transform")
-def scheduled_stock_transform():
-    run_spark_job()
-
 # =========================
 # Run flows manually
 # =========================
@@ -80,6 +87,10 @@ if __name__ == "__main__":
     # scheduled_stock_consumer()
     # print("✅ Consumer finished\n")
 
-    print("Running Spark Transform Flow...")
-    scheduled_stock_transform()
-    print("✅ Transformation finished")
+    print("running Historical Extractor Flow...")
+    scheduled_historical_extractor()
+    print("✅ Extraction finished\n")
+
+    print("Running Transform and Load Flow...")
+    scheduled_transform_load()
+    print("✅ Transform and Load finished\n")

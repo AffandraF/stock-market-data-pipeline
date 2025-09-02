@@ -1,81 +1,68 @@
-import os
-from bson import json_util
-import time
-from kafka import KafkaAdminClient
-from kafka import KafkaConsumer
-from kafka.errors import NoBrokersAvailable
-from pymongo import MongoClient
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, from_json
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
 from prefect import flow, task, get_run_logger
+from utils.spark_builder import init_spark
 
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "stock_prices")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
-DB_NAME = "stock_data"
-COLLECTION_NAME = "daily_prices"
-MAX_RETRIES = 5
-RETRY_DELAY = 5
-
-@task(retries=MAX_RETRIES, retry_delay_seconds=RETRY_DELAY)
-def wait_for_kafka():
-    """Waits for Kafka to be available."""
-    logger = get_run_logger()
-    try:
-        admin = KafkaAdminClient(bootstrap_servers=KAFKA_BROKER, request_timeout_ms=5000)
-        admin.close()
-        logger.info("✅ Kafka is ready")
-    except NoBrokersAvailable as e:
-        logger.warning(f"⏳ Kafka not ready yet: {e}. Retrying...")
-        raise
+# Define schema for stock data
+stock_schema = StructType([
+    StructField("date", StringType(), True),
+    StructField("ticker", StringType(), True),
+    StructField("open", DoubleType(), True),
+    StructField("high", DoubleType(), True),
+    StructField("low", DoubleType(), True),
+    StructField("close", DoubleType(), True),
+    StructField("volume", LongType(), True),
+])
 
 @task
-def consume_from_kafka(max_records: int = 100):
+def consume_and_save(spark, topic, bootstrap_servers, minio_path, checkpoint_path, timeout=None):
     logger = get_run_logger()
-    consumer = KafkaConsumer(
-        KAFKA_TOPIC,
-        bootstrap_servers=KAFKA_BROKER,
-        value_deserializer=lambda m: json_util.loads(m.decode("utf-8")),
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        group_id="stock_consumer_" + str(int(time.time())),
-        consumer_timeout_ms=10000
+
+    # Read from Kafka
+    df = (
+        spark.readStream
+        .format("kafka")
+        .option("kafka.bootstrap.servers", bootstrap_servers)
+        .option("subscribe", topic)
+        .option("startingOffsets", "earliest")
+        .load()
     )
-    records = []
-    for message in consumer:
-        records.append(message.value)
-        if len(records) >= max_records:
-            break
-    consumer.close()
-    logger.info(f"Fetched {len(records)} records from Kafka")
-    return records
 
-@task
-def save_raw_to_mongo(records: list):
-    """Saves records to MongoDB."""
-    logger = get_run_logger()
-    if not records:
-        logger.warning("No records to save")
-        return
+    # Parse Kafka value to JSON
+    value_df = df.selectExpr("CAST(value AS STRING) as json_str")
+    parsed_df = value_df.select(from_json(col("json_str"), stock_schema).alias("data")).select("data.*")
 
-    try:
-        with MongoClient(MONGO_URI) as client:
-            db = client[DB_NAME]
-            collection = db[COLLECTION_NAME]
-            collection.insert_many(records)
-            logger.info(f"Saved {len(records)} raw records to MongoDB")
-    except Exception as e:
-        logger.error(f"Failed to save to MongoDB: {e}")
-        raise
+    # Write to Delta Lake (MinIO/S3)
+    query = (
+        parsed_df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpoint_path)
+        .outputMode("append")
+        .start(minio_path)
+    )
 
+    if timeout:
+        logger.info(f"Running streaming query for {timeout} seconds...")
+        query.awaitTermination(timeout)
+        query.stop()
+        spark.stop()
+        logger.info("✅ Batch simulation finished and Spark stopped")
+    else:
+        logger.info("Running streaming query ...")
+        query.awaitTermination()
 
 @flow(name="stock-consumer-flow")
-def stock_consumer_flow():
-    wait_for_kafka()
-    raw_records = consume_from_kafka()
-    if raw_records:
-        save_raw_to_mongo(raw_records)
-    else:
-        logger = get_run_logger()
-        logger.warning("No records received from Kafka, skipping save")
+def stock_consumer_flow(
+    topic: str = "stock_prices",
+    bootstrap_servers: str = "localhost:9092",
+    minio_path: str = "s3a://stock-data/raw/",
+    checkpoint_path: str = "s3a://stock-data/checkpoints/stock-consumer/",
+    timeout: int = 20  # None for infinite streaming mode
+):
+    spark = init_spark("StockConsumer")
+    consume_and_save(spark, topic, bootstrap_servers, minio_path, checkpoint_path, timeout)
+    spark.stop()
 
 if __name__ == "__main__":
     stock_consumer_flow()
