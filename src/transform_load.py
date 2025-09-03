@@ -2,7 +2,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
-from prefect import task, flow, get_run_logger
+from pyspark.sql.utils import AnalysisException
 from utils.spark_builder import init_spark
 
 def transform_data(df):
@@ -56,27 +56,22 @@ def transform_data(df):
     print("✅ Technical indicators calculation completed.")
     return df
 
-@task
 def read_silver_layer(spark, silver_path: str):
-    logger = get_run_logger()
     df = spark.read.format("delta").load(silver_path)
-    logger.info(f"✅ Loaded Silver Layer data from {silver_path}")
+    print(f"✅ Loaded Silver Layer data from {silver_path}")
     return df
 
-@task
 def load_processed(df, output_path: str):
-    logger = get_run_logger()
     (
         df.write.format("delta")
         .mode("overwrite")
-        .partitionBy("ticker", "year", "month")   # ✅ tambah ticker di partition
+        .partitionBy("ticker", "year", "month")
         .save(output_path)
     )
-    logger.info(f"✅ Saved Gold Layer data (partitioned) to {output_path}")
+    print(f"✅ Saved Gold Layer data (partitioned) to {output_path}")
 
-@task
 def load_to_postgres(df):
-    logger = get_run_logger()
+    #TODE: add ticker column
     (
         df.write.format("jdbc")
         .option("url", "jdbc:postgresql://postgres:5432/stockdb")
@@ -87,26 +82,49 @@ def load_to_postgres(df):
         .mode("append")
         .save()
     )
-    logger.info("✅ Saved Gold Layer data to Postgres")
+    print("✅ Saved Gold Layer data to Postgres")
 
-@flow(name="daily-gold-transform")
 def transform_load_flow(
-    #TODO: fix paths name
-    silver_path = "s3a://stock-data/raw/",
-    gold_path = "s3a://stock-data/processed/"
+    silver_path: str = "s3a://stock-data/raw/",
+    gold_path: str = "s3a://stock-data/processed/"
 ):
     spark = init_spark("StockTransform")
 
     df_silver = read_silver_layer(spark, silver_path)
-    df_transformed = transform_data(df_silver)
 
-    # Extract year and month for partitioning
+    try:
+        df_gold = spark.read.format("delta").load(gold_path)
+
+        last_gold = df_gold.groupBy("ticker").agg(F.max("date").alias("last_date"))
+
+        new_data = df_silver.join(last_gold, "ticker", "left") \
+            .filter((F.col("last_date").isNull()) | (F.col("date") > F.col("last_date")))
+
+        windowSpec = Window.partitionBy("ticker").orderBy(F.col("date").desc())
+        history_context = df_silver.join(last_gold, "ticker", "inner") \
+            .filter(F.col("date") <= F.col("last_date")) \
+            .withColumn("rn", F.row_number().over(windowSpec)) \
+            .filter(F.col("rn") <= 20) \
+            .drop("rn")
+
+        df_incremental = history_context.unionByName(new_data)
+
+        df_transformed = transform_data(df_incremental)
+
+    except AnalysisException:
+        print("No Gold layer found, running full transform...")
+        df_transformed = transform_data(df_silver)
+
     df_final = (
         df_transformed
-        .withColumn("year", df_transformed["date"].substr(1, 4))
-        .withColumn("month", df_transformed["date"].substr(6, 2))
+        .withColumn("year", F.col("date").substr(1, 4))
+        .withColumn("month", F.col("date").substr(6, 2))
     )
 
-    load_processed(df_final, gold_path)
+    load_processed(df_final, gold_path, mode="append")
     load_to_postgres(df_final)
+
     spark.stop()
+
+if __name__ == "__main__":
+    transform_load_flow()
