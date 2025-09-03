@@ -5,58 +5,63 @@ import pandas as pd
 from prefect import flow, task, get_run_logger
 
 def get_kafka_producer(bootstrap_servers: str):
-    """Create Kafka producer with JSON serializer"""
     return KafkaProducer(
         bootstrap_servers=bootstrap_servers,
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
     )
 
 @task
-def load_weekly_data(file_path: str):
-    """Load weekly stock data for multiple tickers"""
+def load_csv_files(data_dir: str) -> dict:
+    """Load multiple CSV files and return dict[ticker -> records]"""
     logger = get_run_logger()
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
-        raise FileNotFoundError(file_path)
-    
-    if file_path.endswith(".csv"):
-        df = pd.read_csv(file_path)
-    elif file_path.endswith(".json"):
-        df = pd.read_json(file_path)
-    else:
-        raise ValueError("Unsupported file format (only csv/json allowed)")
-    
-    if "ticker" not in df.columns:
-        raise ValueError("CSV/JSON must have 'ticker' column")
-    
-    logger.info(f"Loaded {len(df)} records, {df['ticker'].nunique()} tickers from {file_path}")
-    return df.to_dict(orient="records")
+    ticker_data = {}
 
+    for file_name in os.listdir(data_dir):
+        if not file_name.endswith("_kafka.csv"):
+            continue
+
+        ticker = file_name.split("_")[0]
+        file_path = os.path.join(data_dir, file_name)
+
+        df = pd.read_csv(file_path)
+        df["ticker"] = ticker
+
+        logger.info(f"📂 Loaded {len(df)} rows for ticker {ticker} from {file_name}")
+        ticker_data[ticker] = df.to_dict(orient="records")
+
+    if not ticker_data:
+        logger.warning("⚠️ No CSV files found matching *_kafka.csv")
+    return ticker_data
 
 @task
-def push_to_kafka(records: list, topic: str, bootstrap_servers: str):
-    """Send records to Kafka, grouped by ticker"""
+def push_to_kafka(ticker_data: dict, bootstrap_servers: str):
+    """Send records to Kafka, topic per ticker"""
     logger = get_run_logger()
     producer = get_kafka_producer(bootstrap_servers)
 
-    count = 0
-    for record in records:
-        ticker = record.get("ticker", "UNKNOWN")
-        producer.send(topic, key=ticker.encode("utf-8"), value=record)
-        count += 1
-    
+    total_count = 0
+    for ticker, records in ticker_data.items():
+        topic = f"{ticker}_stock_prices"
+        count = 0
+        for record in records:
+            producer.send(topic, key=ticker.encode("utf-8"), value=record)
+            count += 1
+            total_count += 1
+
+        logger.info(f"✅ Sent {count} records to Kafka topic: {topic}")
+
     producer.flush()
-    logger.info(f"✅ Sent {count} records to Kafka topic: {topic}")
+    logger.info(f"🎯 Total {total_count} records sent for {len(ticker_data)} tickers")
+
 
 @flow(name="stock-producer-flow")
 def stock_producer_flow(
-    file_path: str = "data/yfinance_weekly.csv",
-    topic: str = "stock_prices",
+    data_dir: str = "data/raw/",
     bootstrap_servers: str = "localhost:9092"
 ):
-    """Prefect flow for producing stock data into Kafka"""
-    records = load_weekly_data(file_path)
-    push_to_kafka(records, topic, bootstrap_servers)
+    ticker_data = load_csv_files(data_dir)
+    if ticker_data:
+        push_to_kafka(ticker_data, bootstrap_servers)
 
 if __name__ == "__main__":
     stock_producer_flow()
