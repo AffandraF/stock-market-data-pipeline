@@ -1,37 +1,55 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, year, month
-from prefect import flow, task, get_run_logger
+from pyspark.sql.functions import col, year, month, lit
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
+import os
+import glob
 from utils.spark_builder import init_spark
 
-# Task: load historical CSV
-@task
+stock_schema = StructType([
+    StructField("date", StringType(), True),
+    StructField("ticker", StringType(), True),
+    StructField("open", DoubleType(), True),
+    StructField("high", DoubleType(), True),
+    StructField("low", DoubleType(), True),
+    StructField("close", DoubleType(), True),
+    StructField("volume", LongType(), True),
+])
+
 def load_historical_csv(spark, csv_path, output_path):
-    logger = get_run_logger()
 
-    df = spark.read.csv(csv_path, header=True, inferSchema=True)
-    df = df.withColumn("date", col("date").cast("date"))
+    ticker = os.path.basename(csv_path).split("_")[0] 
+    
+    df = (
+        spark.read.schema(stock_schema)
+        .option("header", True)
+        .csv(csv_path)
+    )
 
-    # Add partition columns
-    df = df.withColumn("year", year(col("date"))) \
-           .withColumn("month", month(col("date")))
+    df = (
+        df.withColumn("ticker", lit(ticker))
+          .withColumn("date", col("date").cast("date"))
+          .withColumn("year", year(col("date")))
+          .withColumn("month", month(col("date")))
+    )
 
-    # Save as Delta with partitioning
-    df.write \
-      .format("delta") \
-      .mode("overwrite") \
-      .partitionBy("year", "month") \
-      .save(output_path)
+    (
+        df.write
+        .format("delta")
+        .mode("append")
+        .partitionBy("ticker", "year", "month")
+        .save(output_path)
+    )
 
-    logger.info(f"✅ Historical data saved to {output_path} partitioned by year, month")
+    print(f"✅ Historical data for {ticker} saved to {output_path}")
 
-# Flow: Historical Loader
-@flow(name="daily-historical-loader")
 def extract_historical_flow(
-    csv_path: str = "data/raw/historical.csv",
+    csv_dir: str = "data/raw/",
     output_path: str = "s3a://stock-data/raw/"
 ):
     spark = init_spark("StockExtract")
-    load_historical_csv(spark, csv_path, output_path)
+
+    for csv_path in glob.glob(os.path.join(csv_dir, "*_history.csv")):
+        load_historical_csv(spark, csv_path, output_path)
+
     spark.stop()
 
 if __name__ == "__main__":
