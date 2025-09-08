@@ -1,20 +1,9 @@
 from pyspark.sql.functions import col, from_json
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
-from pyspark.sql.functions import year, month, regexp_extract
+from pyspark.sql.functions import year, month, to_date
 from utils.spark_builder import init_spark
-
-stock_schema = StructType([
-    StructField("date", StringType(), True),
-    StructField("ticker", StringType(), True),
-    StructField("open", DoubleType(), True),
-    StructField("high", DoubleType(), True),
-    StructField("low", DoubleType(), True),
-    StructField("close", DoubleType(), True),
-    StructField("volume", LongType(), True),
-])
+from utils.delta_schema import stock_schema
 
 def consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, timeout=None):
-
     df = (
         spark.readStream
         .format("kafka")
@@ -24,30 +13,33 @@ def consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, time
         .load()
     )
 
-    # Parse Kafka value to JSON
-    value_df = df.selectExpr("CAST(value AS STRING) as json_str", "topic")
-    parsed_df = (
-        value_df
-        .select(from_json(col("json_str"), stock_schema).alias("data"), col("topic"))
-        .select("data.*", "topic")
+    schema = stock_schema()
+    # Parse Kafka message
+    df = (
+    df.selectExpr(
+        "CAST(key AS STRING) as ticker",
+        "CAST(value AS STRING) as json_str"
     )
+        .select(from_json(col("json_str"), schema).alias("data"), col("ticker"))
+        .select("data.*", "ticker")
+    )
+    
+    for c in df.columns:
+        df = df.withColumnRenamed(c, c.lower())
 
-    parsed_df = parsed_df.withColumn("ticker", regexp_extract(col("topic"), r"^([A-Z]+)_stock_prices$", 1))
-
-    parsed_df = parsed_df.withColumn("date", col("date").cast("date"))
-
-    parsed_df = (
-        parsed_df
-        .withColumn("year", year(col("date")))
-        .withColumn("month", month(col("date")))
+    df = (
+        df.withColumn("date", to_date("date", "yyyy-MM-dd"))
+          .withColumn("year", year(col("date")))
+          .withColumn("month", month(col("date")))
     )
 
     # Write to Delta Lake (MinIO/S3)
     query = (
-        parsed_df.writeStream
+        df.writeStream
         .format("delta")
-        .partitionBy("ticker", "year", "month")
+        .partitionBy("year", "month")
         .option("checkpointLocation", checkpoint_path)
+        .option("mergeSchema", "true")
         .outputMode("append")
         .start(minio_path)
     )
@@ -63,15 +55,24 @@ def consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, time
         query.awaitTermination()
 
 def stock_consumer_flow(
-    bootstrap_servers: str = "localhost:9092",
-    minio_path: str = "s3a://stock-data/raw/",
-    checkpoint_path: str = "s3a://stock-data/checkpoints/stock-consumer/",
+    bootstrap_servers: str = "kafka:9092",
+    minio_path: str = "s3a://stock-data-lake/raw/",
+    checkpoint_path: str = "s3a://stock-data-lake/checkpoints/stock-consumer/",
     timeout: int = 20  # None for infinite streaming mode
 ):
-    spark = init_spark("StockConsumer")
-    consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, timeout)
-    spark.stop()
+    try:
+        spark = init_spark("StockConsumer")
+        consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, timeout)
 
+        print("✅ Stock consumer flow completed successfully")
+    
+    except Exception as e:
+        print(f"Error during extraction: {e}")
+        raise
+
+    finally:
+        spark.stop()
+        print("Spark session stopped")
 
 if __name__ == "__main__":
     stock_consumer_flow()
