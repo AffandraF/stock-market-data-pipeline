@@ -16,8 +16,10 @@ services:
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
       - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_CFG_LOG_DIRS=/bitnami/kafka/data
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
     volumes:
       - kafka_data:/bitnami/kafka
+      - ./data/raw:/opt/kafka-data/raw
     networks:
       - stock_data_net
 
@@ -34,28 +36,6 @@ services:
     networks:
       - stock_data_net
 
-  mongodb:
-    image: mongo:6.0
-    container_name: mongodb
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - stock_data_net
-
-  metabase:
-    image: metabase/metabase:v0.49.8
-    container_name: metabase
-    ports:
-      - "3000:3000"
-    volumes:
-      - metabase_data:/metabase-data
-    depends_on:
-      - mongodb
-    networks:
-      - stock_data_net
-
   prefect:
     build:
       context: .
@@ -69,7 +49,7 @@ services:
       - ./src:/opt/prefect/src
       - ./data:/opt/spark-data
     environment:
-      - PREFECT_API_URL=http://prefect:4200/api
+      - PREFECT_API_URL=http://localhost:4200/api
     networks:
       - stock_data_net
     depends_on:
@@ -87,6 +67,7 @@ services:
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
+      - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
     ports:
       - "7077:7077"
       - "8081:8080"
@@ -104,6 +85,7 @@ services:
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark:7077
+      - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
     volumes:
       - ./src:/opt/spark-apps
       - ./data/raw:/opt/spark-data/raw
@@ -147,12 +129,41 @@ services:
     networks:
       - stock_data_net
 
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_DB: stockdb
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/utils/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - stock_data_net
+
+  metabase:
+    image: metabase/metabase:v0.49.8
+    container_name: metabase
+    ports:
+      - "3000:3000"
+    volumes:
+      - metabase_data:/metabase-data
+    depends_on:
+      - postgres
+    networks:
+      - stock_data_net
+
 volumes:
   kafka_data:
   mongodb_data:
   metabase_data:
   prefect_data:
   spark_data:
+  postgres_data:
 
 networks:
   stock_data_net:

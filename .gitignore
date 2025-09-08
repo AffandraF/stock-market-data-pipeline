@@ -3,3 +3,4 @@ notebooks
 data
 docker
 src/__pycache__
+src/*/__pycache__

@@ -42,4 +42,9 @@ echo "Both server and worker are running"\n\
 wait $SERVER_PID $WORKER_PID\n\
 ' > /opt/prefect/start.sh && chmod +x /opt/prefect/start.sh
 
+# Add alias-like script for running flows
+RUN echo '#!/bin/bash\n\
+python /opt/prefect/src/flows.py "$@"\n\
+' > /usr/local/bin/runflows && chmod +x /usr/local/bin/runflows
+
 CMD ["/opt/prefect/start.sh"]
