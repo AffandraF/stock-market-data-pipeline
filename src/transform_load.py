@@ -1,20 +1,43 @@
 # src/transform.py
-from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
-from pyspark.sql import DataFrame
-from delta.tables import DeltaTable
 from pyspark.sql.utils import AnalysisException
 from utils.spark_builder import init_spark
-import psycopg2
 import os
 
-def extract_raw(spark, raw_path: str):
+def extract_raw(spark, raw_path: str, last_date=None, context_size=20):
     df = spark.read.format("delta").load(raw_path)
-    print(f"✅ Extract raw data from {raw_path}")
+
+    if last_date is not None:
+        # History context: 20 rows up to last_date
+        windowDesc = Window.partitionBy("ticker").orderBy(F.col("date").desc())
+        history_context = (
+            df.join(last_date, "ticker", "inner")
+              .filter(F.col("date") <= F.col("last_date"))
+              .withColumn("rn", F.row_number().over(windowDesc))
+              .filter(F.col("rn") <= context_size)          
+              .drop("rn", "last_date")
+        )
+
+        # New data after last_date
+        new_data = (
+            df.join(last_date, "ticker", "left")
+              .filter((F.col("last_date").isNull()) | (F.col("date") > F.col("last_date")))
+              .drop("last_date")
+        )
+
+        df = history_context.unionByName(new_data)
+        print(f"✅ Extracted incremental data: {context_size} rows before + all rows after last_date")
+    else:
+        print("✅ Extracted full raw data")
+
     return df
 
-def transform_data(df):
+def get_last_date(df):
+    return df.groupBy("ticker").agg(F.max("date").alias("last_date"))
+
+
+def transform_data(df, last_date=None):
     windowSpec = Window.partitionBy("ticker").orderBy("date")
 
     print("Starting technical indicators calculation...")
@@ -61,118 +84,65 @@ def transform_data(df):
     df = df.withColumn("Bollinger_Upper", F.col("rolling_mean") + 2 * F.col("rolling_std"))
     df = df.withColumn("Bollinger_Lower", F.col("rolling_mean") - 2 * F.col("rolling_std"))
 
-    print("Technical indicators calculation completed.")
-    return df
+    print("✅ Technical indicators calculation completed.")
 
-def load_processed(df, output_path, last_date=None):
     if last_date is None:
-        # Full load
-        df.write.format("delta") \
-            .mode("overwrite") \
-            .partitionBy("year", "month") \
-            .save(output_path)
-        print(f"✅ Delta table created (overwrite) at {output_path}")
+        return df
     else:
-        df_to_append = df.filter(F.col("date") > F.to_date(F.lit(last_date)))
+        df = df.join(last_date, "ticker", "left")
+        df = df.filter((F.col("last_date").isNull()) | (F.col("date") > F.col("last_date")))
+        df = df.drop("last_date")
+        print("Filtered to only new data after last_date")
+        return df
 
-        if df_to_append.count() > 0:
-            df_to_append.write.format("delta") \
-                .mode("append") \
-                .partitionBy("year", "month") \
-                .option("mergeSchema", "true") \
-                .save(output_path)
-            print(f"✅ Appended {df_to_append.count()} rows to Delta table at {output_path}")
-        else:
-            print("No new data to append")
+def load_processed(df, output_path):
+    df.write.format("delta") \
+        .mode("overwrite") \
+        .partitionBy("year", "month") \
+        .save(output_path)
+    print(f"✅ Delta table created (overwrite) at {output_path}")
         
-
-def load_to_postgres(df, last_date=None):
+def load_to_postgres(df):
     table_name = os.getenv("POSTGRES_TABLE", "public.stock_data")
     url = os.getenv("POSTGRES_URL", "jdbc:postgresql://postgres:5432/stockdb")
     user = os.getenv("POSTGRES_USER", "postgres")
     password = os.getenv("POSTGRES_PASSWORD", "postgres")
 
-    if last_date is None:
-        df.write.format("jdbc") \
-            .option("url", url) \
-            .option("dbtable", table_name) \
-            .option("user", user) \
-            .option("password", password) \
-            .option("driver", "org.postgresql.Driver") \
-            .mode("overwrite") \
-            .save()
-        print(f"✅ Load all data to {table_name}")
-        return
-    else:
-        df_to_append = df.filter(F.col("date") > F.to_date(F.lit(last_date)))
-
-        if df_to_append.count() > 0:
-            df_to_append.write.format("jdbc") \
-                .option("url", url) \
-                .option("dbtable", table_name) \
-                .option("user", user) \
-                .option("password", password) \
-                .option("driver", "org.postgresql.Driver") \
-                .mode("append") \
-                .save()
-            print(f"✅ Appended {df_to_append.count()} rows to Postgres table {table_name}")
-        else:
-            print("No new data to append")
-
-def build_incremental(df_raw, df_processed, context_size=20):
-    # Get last processed date per ticker
-    last_date = df_processed.groupBy("ticker").agg(F.max("date").alias("last_date"))
-
-    new_data = (
-        df_raw.join(last_date, "ticker", "left")
-              .filter((F.col("last_date").isNull()) | (F.col("date") > F.col("last_date")))
-    )
-
-    windowDesc = Window.partitionBy("ticker").orderBy(F.col("date").desc())
-
-    history_context = (
-        df_raw.join(last_date, "ticker", "inner")
-              .filter(F.col("date") <= F.col("last_date"))
-              .withColumn("rn", F.row_number().over(windowDesc))
-              .filter(F.col("rn") <= context_size)
-              .drop("rn")
-    )
-
-    return history_context.unionByName(new_data), last_date
+    df.write.format("jdbc") \
+        .option("url", url) \
+        .option("dbtable", table_name) \
+        .option("user", user) \
+        .option("password", password) \
+        .option("driver", "org.postgresql.Driver") \
+        .mode("overwrite") \
+        .save()
+    print(f"✅ Load all data to {table_name}")
+    return
 
 def transform_load_flow(
     raw_path: str = "s3a://stock-data-lake/raw/",
     processed_path: str = "s3a://stock-data-lake/processed/"
 ):
     spark = init_spark("StockTransform")
-    df_raw = extract_raw(spark, raw_path)
 
     try:
-        df_raw = extract_raw(spark, raw_path)
-    
+        # Step 1: Extract processed
         try:
             df_processed = spark.read.format("delta").load(processed_path)
-            df_incremental, last_date = build_incremental(df_raw, df_processed)
-            df_transformed = transform_data(df_incremental)
-            df_final = (
-                df_transformed
-                .withColumn("year", F.col("date").substr(1, 4))
-                .withColumn("month", F.col("date").substr(6, 2))
-            )
-            
-            load_processed(df_final, processed_path, last_date)
-            load_to_postgres(df_final, last_date)        
+            last_date = df_processed.groupBy("ticker").agg(F.max("date").alias("last_date"))
         except AnalysisException:
-            print("No processed found, running full transform...")
-            df_transformed = transform_data(df_raw)
-            df_final = (
-                df_transformed
-                .withColumn("year", F.col("date").substr(1, 4))
-                .withColumn("month", F.col("date").substr(6, 2))
-            )
+            last_date = None
 
-            load_processed(df_final, processed_path)
-            load_to_postgres(df_final)
+        # Step 2: Extract raw (full or incremental depends on last_date)
+        df_raw = extract_raw(spark, raw_path, last_date, context_size=20)
+
+        # Step 3: Transform
+        df_transformed = transform_data(df_raw, last_date)
+
+        # Step 4: Load to Delta Lake
+        load_processed(df_transformed, processed_path, last_date)
+        # Step 5: Load to Postgres
+        load_to_postgres(df_transformed, last_date)
     finally:
         spark.stop()
 
