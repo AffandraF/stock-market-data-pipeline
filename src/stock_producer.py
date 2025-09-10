@@ -52,10 +52,13 @@ def stock_producer_flow(
     data_dir: str = "/opt/spark-data/raw/",
     bootstrap_servers: str = "kafka:9092"
 ):
-    #TODO: add try-except and logging
-    ticker_data = load_csv_files(data_dir)
-    if ticker_data:
-        push_to_kafka(ticker_data, bootstrap_servers)
+    try:
+        ticker_data = load_csv_files(data_dir)
+        if ticker_data:
+            push_to_kafka(ticker_data, bootstrap_servers)
+    except Exception as e:  
+        print(f"Error in stock producer flow: {e}")
+        raise
 
 if __name__ == "__main__":
     stock_producer_flow()
