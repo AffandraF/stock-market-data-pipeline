@@ -9,7 +9,7 @@ def run_spark_job(script_name: str):
 
     # Check if script exists
     if not os.path.exists(script_path):
-        logger.error(f"❌ Spark script not found: {script_path}")
+        logger.error(f"Spark script not found: {script_path}")
         raise FileNotFoundError(f"{script_path} not found")
 
     # List of compatible packages
@@ -22,7 +22,7 @@ def run_spark_job(script_name: str):
     ]
 
     try:
-        logger.info(f"🚀 Starting Spark job: {script_name}")
+        logger.info(f"Starting Spark job: {script_name}")
 
         result = subprocess.run(
             [
@@ -42,10 +42,10 @@ def run_spark_job(script_name: str):
         if result.stderr:
             logger.warning(f"STDERR:\n{result.stderr}")
 
-        logger.info("✅ Spark job finished successfully")
+        logger.info("Spark job finished successfully")
 
     except subprocess.CalledProcessError as e:
-        logger.error("❌ Spark job failed")
+        logger.error("Spark job failed")
         if e.stdout:
             logger.error(f"STDOUT:\n{e.stdout}")
         if e.stderr:

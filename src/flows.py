@@ -31,7 +31,7 @@ def check_data(bucket: str, prefix: str) -> bool:
         logger.info(f"Historical data exists: {exists}")
         return exists
     except ClientError as e:
-        logger.error(f"❌ Failed to check MinIO: {e}")
+        logger.error(f"Failed to check MinIO: {e}")
         return False
     
 # 3. Extract historical data (if not exists)
@@ -43,7 +43,7 @@ def scheduled_historical_extractor():
     exists = check_data(bucket, prefix)
 
     if exists:
-        print("✅ Data already exists, skipping extractor")
+        print("Data already exists, skipping extractor")
         return
     
     run_spark_job("extract.py")
@@ -58,23 +58,37 @@ def scheduled_stock_consumer():
 def scheduled_transform_load():
     run_spark_job("transform_load.py")
 
+@flow(name="daily-stock-etl")
+def daily_stock_etl():
+    # Step 1: Kafka producer
+    scheduled_stock_producer()
+
+    # Step 2: Extract historical data (if not exists)
+    scheduled_historical_extractor()
+
+    # Step 3: Consume realtime data
+    scheduled_stock_consumer()
+
+    # Step 4: Transform & load to Delta/Postgres
+    scheduled_transform_load()
+
 # =========================
 # Run flows manually
 # =========================
-if __name__ == "__main__":
+# if __name__ == "__main__":
     # Uncomment to test separately
     # print("Running Producer Flow...")
     # scheduled_stock_producer()
-    # print("✅ Producer finished\n")
+    # print("Producer finished\n")
 
     # print("running Historical Extractor Flow...")
     # scheduled_historical_extractor()
-    # print("✅ Extraction finished\n")
+    # print("Extraction finished\n")
 
     # print("Running Consumer Flow...")
     # scheduled_stock_consumer()
-    # print("✅ Consumer finished\n")    
+    # print("Consumer finished\n")    
 
-    print("Running Transform and Load Flow...")
-    scheduled_transform_load()
-    print("✅ Transform and Load finished\n")
+    # print("Running Transform and Load Flow...")
+    # scheduled_transform_load()
+    # print("Transform and Load finished\n")

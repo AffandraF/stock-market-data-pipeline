@@ -27,7 +27,7 @@ def load_csv_files(data_dir: str) -> dict:
         ticker_data[ticker] = df.to_dict(orient="records")
 
     if not ticker_data:
-        print("⚠️ No CSV files found matching *_kafka.csv")
+        print("No CSV files found matching *_kafka.csv")
     return ticker_data
 
 def push_to_kafka(ticker_data: dict, bootstrap_servers: str):
@@ -43,7 +43,7 @@ def push_to_kafka(ticker_data: dict, bootstrap_servers: str):
             count += 1
             total_count += 1
 
-        print(f"✅ Sent {count} records to Kafka topic: {topic}")
+        print(f"Sent {count} records to Kafka topic: {topic}")
 
     producer.flush()
     print(f"Total {total_count} records sent for {len(ticker_data)} tickers")

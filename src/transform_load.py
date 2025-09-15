@@ -27,9 +27,9 @@ def extract_raw(spark, raw_path: str, last_date=None, context_size=20):
         )
 
         df = history_context.unionByName(new_data)
-        print(f"✅ Extracted incremental data: {context_size} rows before + all rows after last_date")
+        print(f"Extracted incremental data: {context_size} rows before + all rows after last_date")
     else:
-        print("✅ Extracted full raw data")
+        print("Extracted full raw data")
 
     return df
 
@@ -84,7 +84,7 @@ def transform_data(df, last_date=None):
     df = df.withColumn("Bollinger_Upper", F.col("rolling_mean") + 2 * F.col("rolling_std"))
     df = df.withColumn("Bollinger_Lower", F.col("rolling_mean") - 2 * F.col("rolling_std"))
 
-    print("✅ Technical indicators calculation completed.")
+    print("Technical indicators calculation completed.")
 
     if last_date is None:
         return df
@@ -100,7 +100,7 @@ def load_processed(df, output_path):
         .mode("overwrite") \
         .partitionBy("year", "month") \
         .save(output_path)
-    print(f"✅ Delta table created (overwrite) at {output_path}")
+    print(f"Delta table created (overwrite) at {output_path}")
         
 def load_to_postgres(df):
     table_name = os.getenv("POSTGRES_TABLE", "public.stock_data")
@@ -116,7 +116,7 @@ def load_to_postgres(df):
         .option("driver", "org.postgresql.Driver") \
         .mode("overwrite") \
         .save()
-    print(f"✅ Load all data to {table_name}")
+    print(f"Load all data to {table_name}")
     return
 
 def transform_load_flow(

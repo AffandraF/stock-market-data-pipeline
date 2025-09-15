@@ -49,7 +49,7 @@ def consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, time
         query.awaitTermination(timeout)
         query.stop()
         spark.stop()
-        print("✅ Batch simulation finished and Spark stopped")
+        print("Batch simulation finished and Spark stopped")
     else:
         print("Running streaming query ...")
         query.awaitTermination()
@@ -64,7 +64,7 @@ def stock_consumer_flow(
         spark = init_spark("StockConsumer")
         consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, timeout)
 
-        print("✅ Stock consumer flow completed successfully")
+        print("Stock consumer flow completed successfully")
     
     except Exception as e:
         print(f"Error during extraction: {e}")

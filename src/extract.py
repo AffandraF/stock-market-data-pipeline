@@ -36,7 +36,7 @@ def load_historical_csv(spark, csv_path, output_path):
         .save(output_path)
     )
 
-    print(f"✅ Historical data for {ticker} saved to {output_path}")
+    print(f"Historical data for {ticker} saved to {output_path}")
 
 def extract_historical_flow(
     csv_dir: str = "/opt/spark-data/raw/",
@@ -49,7 +49,7 @@ def extract_historical_flow(
         for csv_path in glob.glob(os.path.join(csv_dir, "*_history.csv")):
             load_historical_csv(spark, csv_path, output_path)
 
-        print("✅ Extraction completed successfully")
+        print("Extraction completed successfully")
 
     except Exception as e:
         print(f"Error during extraction: {e}")
