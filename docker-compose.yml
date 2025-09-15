@@ -36,23 +36,31 @@ services:
     networks:
       - stock_data_net
 
-  prefect:
+  prefect-server:
+    image: prefecthq/prefect:3.4-python3.12-conda
+    container_name: prefect-server
+    command: prefect server start --host 0.0.0.0 --port 4200
+    ports:
+      - "4200:4200"
+    networks:
+      - stock_data_net
+
+  prefect-agent:
     build:
       context: .
       dockerfile: Dockerfile.prefect
-    container_name: prefect
-    ports:
-      - "4200:4200"
+    container_name: prefect-agent
     env_file:
-    - ./.env
+      - ./.env
     volumes:
       - ./src:/opt/prefect/src
       - ./data:/opt/spark-data
     environment:
-      - PREFECT_API_URL=http://localhost:4200/api
+      - PREFECT_API_URL=http://prefect-server:4200/api
     networks:
       - stock_data_net
     depends_on:
+      - prefect-server
       - spark
       - spark-worker
 

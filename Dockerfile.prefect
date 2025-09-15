@@ -1,5 +1,5 @@
 # Dockerfile.prefect
-FROM python:3.12-slim-bullseye
+FROM prefecthq/prefect:3.4-python3.12-conda
 
 WORKDIR /opt/prefect
 
@@ -16,35 +16,15 @@ ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# COPY ./src /opt/prefect/flows
+# COPY ./src /opt/prefect/src
 
 # Startup script
-RUN echo '#!/bin/bash\n\
-echo "Starting Prefect server..."\n\
-prefect server start --host 0.0.0.0 &\n\
-SERVER_PID=$!\n\
-\n\
-echo "Waiting for Prefect server to be ready..."\n\
-until curl -f http://localhost:4200/api/health > /dev/null 2>&1; do\n\
-  echo "Server not ready yet, waiting..."\n\
-  sleep 5\n\
-done\n\
-\n\
-echo "Server is ready! Creating work pool..."\n\
-export PREFECT_API_URL=http://localhost:4200/api\n\
-prefect work-pool create --type process "default-agent-pool" 2>/dev/null || echo "Work pool already exists or creation failed"\n\
-\n\
-echo "Starting worker..."\n\
-prefect worker start --pool "default-agent-pool" &\n\
-WORKER_PID=$!\n\
-\n\
-echo "Both server and worker are running"\n\
-wait $SERVER_PID $WORKER_PID\n\
-' > /opt/prefect/start.sh && chmod +x /opt/prefect/start.sh
+COPY src/utils/prefect_startup.sh ./startup.sh
+RUN chmod +x ./startup.sh
 
 # Add alias-like script for running flows
 RUN echo '#!/bin/bash\n\
 python /opt/prefect/src/flows.py "$@"\n\
 ' > /usr/local/bin/runflows && chmod +x /usr/local/bin/runflows
 
-CMD ["/opt/prefect/start.sh"]
+CMD ["bash", "./startup.sh"]
