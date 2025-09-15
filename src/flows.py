@@ -9,13 +9,16 @@ from botocore.exceptions import ClientError
 # 1. Producer (push to Kafka)
 @flow(name="daily-stock-producer")
 def scheduled_stock_producer():
+    logger = get_run_logger()
+    logger.info("Starting stock producer...")
     stock_producer_flow()
+    logger.info("Finished stock producer")
 
 # 2. Check if data exists in MinIO/Delta
 @task
 def check_data(bucket: str, prefix: str) -> bool:
-    """Check if historical data already exists in MinIO/Delta"""
     logger = get_run_logger()
+    logger.info(f"Checking if historical data exists in {bucket}/{prefix}...")
 
     # Init S3 client (MinIO)
     s3 = boto3.client(
@@ -33,33 +36,46 @@ def check_data(bucket: str, prefix: str) -> bool:
     except ClientError as e:
         logger.error(f"Failed to check MinIO: {e}")
         return False
-    
+
 # 3. Extract historical data (if not exists)
 @flow(name="daily-historical-extractor")
 def scheduled_historical_extractor():
+    logger = get_run_logger()
     bucket = "stock-data-lake"
     prefix = "raw/"
 
     exists = check_data(bucket, prefix)
 
     if exists:
-        print("Data already exists, skipping extractor")
+        logger.info("Data already exists, skipping extractor")
         return
     
+    logger.info("Running historical extractor...")
     run_spark_job("extract.py")
+    logger.info("Finished historical extraction")
 
 # 4. Extract data from Kafka and load to Delta
 @flow(name="daily-stock-consumer")
 def scheduled_stock_consumer():
+    logger = get_run_logger()
+    logger.info("Starting stock consumer (Kafka → Delta)...")
     run_spark_job("stock_consumer.py")
+    logger.info("Finished stock consumer job")
 
 # 5. Transform data and Load to final table
 @flow(name="daily-transform-load")
 def scheduled_transform_load():
+    logger = get_run_logger()
+    logger.info("Starting transform & load job...")
     run_spark_job("transform_load.py")
+    logger.info("Finished transform & load job")
 
+# Master flow
 @flow(name="daily-stock-etl")
 def daily_stock_etl():
+    logger = get_run_logger()
+    logger.info("Starting daily stock ETL pipeline...")
+
     # Step 1: Kafka producer
     scheduled_stock_producer()
 
@@ -71,6 +87,8 @@ def daily_stock_etl():
 
     # Step 4: Transform & load to Delta/Postgres
     scheduled_transform_load()
+
+    logger.info("🎉 ETL pipeline completed successfully")
 
 # =========================
 # Run flows manually
