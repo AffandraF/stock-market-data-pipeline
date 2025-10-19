@@ -1,64 +1,78 @@
-from kafka import KafkaProducer
-import json
 import os
+import json
+import logging
 import pandas as pd
+from kafka import KafkaProducer
 
-def get_kafka_producer(bootstrap_servers: str):
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+def create_producer(servers: str):
+    # Create Kafka producer with JSON serializer
     return KafkaProducer(
-        bootstrap_servers=bootstrap_servers,
+        bootstrap_servers=servers,
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
     )
 
-def load_csv_files(data_dir: str) -> dict:
-    """Load multiple CSV files and return dict[ticker -> records]"""
-    ticker_data = {}
+def load_csvs(data_dir: str) -> dict:
+    # Load all *_kafka.csv files and group by ticker
+    data = {}
 
-    for file_name in os.listdir(data_dir):
-        if not file_name.endswith("_kafka.csv"):
+    for file in os.listdir(data_dir):
+        if not file.endswith("_kafka.csv"):
             continue
 
-        ticker = file_name.split("_")[0]
-        file_path = os.path.join(data_dir, file_name)
+        ticker = file.split("_")[0]
+        path = os.path.join(data_dir, file)
 
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(path)
         df["ticker"] = ticker
 
-        print(f"Loaded {len(df)} rows for ticker {ticker} from {file_name}")
-        ticker_data[ticker] = df.to_dict(orient="records")
+        logger.info(f"Loaded {len(df)} rows for {ticker} from {file}")
+        data[ticker] = df.to_dict(orient="records")
 
-    if not ticker_data:
-        print("No CSV files found matching *_kafka.csv")
-    return ticker_data
+    if not data:
+        logger.warning("No CSV files found matching *_kafka.csv")
 
-def push_to_kafka(ticker_data: dict, bootstrap_servers: str):
-    """Send records to Kafka, topic per ticker"""
-    producer = get_kafka_producer(bootstrap_servers)
+    return data
 
-    total_count = 0
-    for ticker, records in ticker_data.items():
+def send_to_kafka(data: dict, servers: str):
+    # Send all records to Kafka per ticker topic
+    producer = create_producer(servers)
+    total = 0
+
+    for ticker, records in data.items():
         topic = f"{ticker}_stock_prices"
         count = 0
+
         for record in records:
             producer.send(topic, key=ticker.encode("utf-8"), value=record)
             count += 1
-            total_count += 1
+            total += 1
 
-        print(f"Sent {count} records to Kafka topic: {topic}")
+        logger.info(f"Sent {count} records to topic: {topic}")
 
     producer.flush()
-    print(f"Total {total_count} records sent for {len(ticker_data)} tickers")
+    logger.info(f"Total {total} records sent for {len(data)} tickers")
 
-def stock_producer_flow(
-    data_dir: str = "/opt/spark-data/raw/",
-    bootstrap_servers: str = "kafka:9092"
-):
+def run_producer():
+    # Read environment configs
+    data_dir = os.getenv("CSV_DIR", "/opt/spark-data/raw/")
+    servers = os.getenv("KAFKA_SERVERS", "kafka:9092")
+
     try:
-        ticker_data = load_csv_files(data_dir)
-        if ticker_data:
-            push_to_kafka(ticker_data, bootstrap_servers)
-    except Exception as e:  
-        print(f"Error in stock producer flow: {e}")
+        logger.info("Starting stock producer")
+
+        data = load_csvs(data_dir)
+        if data:
+            send_to_kafka(data, servers)
+
+        logger.info("Stock producer completed successfully")
+
+    except Exception as e:
+        logger.error(f"Producer error: {e}")
         raise
 
 if __name__ == "__main__":
-    stock_producer_flow()
+    run_producer()

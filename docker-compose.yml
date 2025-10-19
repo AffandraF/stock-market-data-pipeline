@@ -76,12 +76,17 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
       - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
+      - SPARK_EVENTLOG_ENABLED=true
+      - SPARK_EVENTLOG_DIR=file:///opt/spark/logs
+      - SPARK_LOG_DIR=/opt/spark/logs
+      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=file:///opt/spark/logs
     ports:
       - "7077:7077"
       - "8081:8080"
     volumes:
       - ./src:/opt/spark-apps                
       - ./data/raw:/opt/spark-data/raw
+      - spark_logs:/opt/spark/logs
     networks:
       - stock_data_net
   
@@ -94,9 +99,14 @@ services:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark:7077
       - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
+      - SPARK_EVENTLOG_ENABLED=true
+      - SPARK_EVENTLOG_DIR=file:///opt/spark/logs
+      - SPARK_LOG_DIR=/opt/spark/logs
+      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=file:///opt/spark/logs
     volumes:
       - ./src:/opt/spark-apps
       - ./data/raw:/opt/spark-data/raw
+      - spark_logs:/opt/spark/logs
     depends_on:
       - spark
     ports:
@@ -142,7 +152,7 @@ services:
     container_name: postgres
     restart: always
     environment:
-      POSTGRES_DB: stockdb
+      POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
@@ -153,24 +163,9 @@ services:
     networks:
       - stock_data_net
 
-  metabase:
-    image: metabase/metabase:v0.49.8
-    container_name: metabase
-    ports:
-      - "3000:3000"
-    volumes:
-      - metabase_data:/metabase-data
-    depends_on:
-      - postgres
-    networks:
-      - stock_data_net
-
 volumes:
   kafka_data:
-  mongodb_data:
-  metabase_data:
-  prefect_data:
-  spark_data:
+  spark_logs:
   postgres_data:
 
 networks:

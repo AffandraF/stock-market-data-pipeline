@@ -23,8 +23,7 @@ COPY src/utils/prefect_startup.sh ./startup.sh
 RUN chmod +x ./startup.sh
 
 # Add alias-like script for running flows
-RUN echo '#!/bin/bash\n\
-python /opt/prefect/src/flows.py "$@"\n\
-' > /usr/local/bin/runflows && chmod +x /usr/local/bin/runflows
+RUN echo -e '#!/bin/bash\npython /opt/prefect/src/flows.py "$@"' > /usr/local/bin/runflows \
+    && chmod +x /usr/local/bin/runflows
 
 CMD ["bash", "./startup.sh"]

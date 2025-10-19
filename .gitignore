@@ -1,5 +1,5 @@
 .env
-notebooks
+notebooks/stock_data.csv
 data
 docker
 src/__pycache__

@@ -4,7 +4,7 @@ from prefect import get_run_logger
 
 def run_spark_job(script_name: str):
     logger = get_run_logger()
-    spark_master_url = "spark://spark:7077"
+    spark_master = "spark://spark:7077"
     script_path = f"/opt/prefect/src/{script_name}"
 
     # Check if script exists
@@ -12,7 +12,7 @@ def run_spark_job(script_name: str):
         logger.error(f"Spark script not found: {script_path}")
         raise FileNotFoundError(f"{script_path} not found")
 
-    # List of compatible packages
+    # Required Spark packages
     packages = [
         "org.apache.hadoop:hadoop-aws:3.3.4",
         "io.delta:delta-spark_2.12:3.2.0",
@@ -21,33 +21,35 @@ def run_spark_job(script_name: str):
         "org.postgresql:postgresql:42.7.3"
     ]
 
-    try:
-        logger.info(f"Starting Spark job: {script_name}")
+    cmd = [
+        "spark-submit",
+        "--master", spark_master,
+        "--deploy-mode", "client",
+        "--packages", ",".join(packages),
+        script_path
+    ]
 
+    try:
+        logger.info(f"Running Spark job: {script_name}")
         result = subprocess.run(
-            [
-                "spark-submit",
-                "--master", spark_master_url,
-                "--deploy-mode", "client",
-                "--packages", ",".join(packages),
-                script_path
-            ],
+            cmd,
             capture_output=True,
             text=True,
             check=True
         )
 
-        if result.stdout:
-            logger.info(f"STDOUT:\n{result.stdout}")
-        if result.stderr:
-            logger.warning(f"STDERR:\n{result.stderr}")
+        # Log stdout and stderr
+        if result.stdout.strip():
+            logger.info(result.stdout.strip())
+        if result.stderr.strip():
+            logger.warning(result.stderr.strip())
 
-        logger.info("Spark job finished successfully")
+        logger.info("Spark job completed successfully")
 
     except subprocess.CalledProcessError as e:
-        logger.error("Spark job failed")
-        if e.stdout:
-            logger.error(f"STDOUT:\n{e.stdout}")
-        if e.stderr:
-            logger.error(f"STDERR:\n{e.stderr}")
+        logger.error(f"Spark job failed: {script_name}")
+        if e.stdout.strip():
+            logger.error(e.stdout.strip())
+        if e.stderr.strip():
+            logger.error(e.stderr.strip())
         raise

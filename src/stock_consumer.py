@@ -1,29 +1,33 @@
-from pyspark.sql.functions import col, from_json
-from pyspark.sql.functions import year, month, to_date
+from pyspark.sql.functions import col, from_json, year, month, to_date
 from utils.spark_builder import init_spark
 from utils.delta_schema import stock_schema
+import logging
 
-def consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, timeout=None):
+# Configure logger
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+def consume_stream(spark, servers, output_path, checkpoint_path):
+    # Read stock data from Kafka
     df = (
         spark.readStream
         .format("kafka")
-        .option("kafka.bootstrap.servers", bootstrap_servers)
+        .option("kafka.bootstrap.servers", servers)
         .option("subscribePattern", ".*_stock_prices")
         .option("startingOffsets", "earliest")
         .load()
     )
 
     schema = stock_schema()
-    # Parse Kafka message
+
+    # Parse Kafka JSON messages
     df = (
-    df.selectExpr(
-        "CAST(key AS STRING) as ticker",
-        "CAST(value AS STRING) as json_str"
+        df.selectExpr("CAST(key AS STRING) as ticker", "CAST(value AS STRING) as json_str")
+          .select(from_json(col("json_str"), schema).alias("data"), col("ticker"))
+          .select("data.*", "ticker")
     )
-        .select(from_json(col("json_str"), schema).alias("data"), col("ticker"))
-        .select("data.*", "ticker")
-    )
-    
+
+    # Normalize and add partitions
     for c in df.columns:
         df = df.withColumnRenamed(c, c.lower())
 
@@ -33,7 +37,10 @@ def consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, time
           .withColumn("month", month(col("date")))
     )
 
-    # Write to Delta Lake (MinIO/S3)
+    # Remove duplicates
+    df = df.dropDuplicates(["ticker", "date"])
+
+    # Write stream to Delta Lake
     query = (
         df.writeStream
         .format("delta")
@@ -41,38 +48,28 @@ def consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, time
         .option("checkpointLocation", checkpoint_path)
         .option("mergeSchema", "true")
         .outputMode("append")
-        .start(minio_path)
+        .trigger(availableNow=True)
+        .start(output_path)
     )
+    query.awaitTermination()
 
-    if timeout:
-        print(f"Running streaming query for {timeout} seconds...")
-        query.awaitTermination(timeout)
-        query.stop()
-        spark.stop()
-        print("Batch simulation finished and Spark stopped")
-    else:
-        print("Running streaming query ...")
-        query.awaitTermination()
-
-def stock_consumer_flow(
-    bootstrap_servers: str = "kafka:9092",
-    minio_path: str = "s3a://stock-data-lake/raw/",
+def run_consumer(
+    servers: str = "kafka:9092",
+    output_path: str = "s3a://stock-data-lake/raw/",
     checkpoint_path: str = "s3a://stock-data-lake/checkpoints/stock-consumer/",
-    timeout: int = 20  # None for infinite streaming mode
 ):
     try:
         spark = init_spark("StockConsumer")
-        consume_and_save(spark, bootstrap_servers, minio_path, checkpoint_path, timeout)
+        consume_stream(spark, servers, output_path, checkpoint_path)
+        logger.info("Consumer finished successfully")
 
-        print("Stock consumer flow completed successfully")
-    
     except Exception as e:
-        print(f"Error during extraction: {e}")
+        logger.error(f"Error during streaming: {e}")
         raise
 
     finally:
         spark.stop()
-        print("Spark session stopped")
+        logger.info("Spark session stopped")
 
 if __name__ == "__main__":
-    stock_consumer_flow()
+    run_consumer()
