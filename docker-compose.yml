@@ -1,155 +1,9 @@
+version: '3.8'
+
 services:
-  kafka:
-    image: bitnami/kafka:4.0.0
-    container_name: kafka
-    ports:
-      - "9092:9092"
-      - "29092:29092"
-    environment:
-      - KAFKA_ENABLE_KRAFT=yes
-      - KAFKA_CFG_NODE_ID=0
-      - KAFKA_CFG_PROCESS_ROLES=controller,broker
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_LOG_DIRS=/bitnami/kafka/data
-      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
-    volumes:
-      - kafka_data:/bitnami/kafka
-      - ./data/raw:/opt/kafka-data/raw
-    networks:
-      - stock_data_net
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:v0.7.2
-    container_name: kafka-ui
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-    depends_on:
-      - kafka
-    networks:
-      - stock_data_net
-
-  prefect-server:
-    image: prefecthq/prefect:3.4-python3.12-conda
-    container_name: prefect-server
-    command: prefect server start --host 0.0.0.0 --port 4200
-    ports:
-      - "4200:4200"
-    networks:
-      - stock_data_net
-
-  prefect-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile.prefect
-    container_name: prefect-agent
-    env_file:
-      - ./.env
-    volumes:
-      - ./src:/opt/prefect/src
-      - ./data:/opt/spark-data
-    environment:
-      - PREFECT_API_URL=http://prefect-server:4200/api
-    networks:
-      - stock_data_net
-    depends_on:
-      - prefect-server
-      - spark
-      - spark-worker
-
-  spark:
-    image: bitnami/spark:3.5.6
-    container_name: spark
-    env_file:
-    - ./.env
-    environment:
-      - SPARK_MODE=master
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
-      - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
-      - SPARK_EVENTLOG_ENABLED=true
-      - SPARK_EVENTLOG_DIR=file:///opt/spark/logs
-      - SPARK_LOG_DIR=/opt/spark/logs
-      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=file:///opt/spark/logs
-    ports:
-      - "7077:7077"
-      - "8081:8080"
-    volumes:
-      - ./src:/opt/spark-apps                
-      - ./data/raw:/opt/spark-data/raw
-      - spark_logs:/opt/spark/logs
-    networks:
-      - stock_data_net
-  
-  spark-worker:
-    image: bitnami/spark:3.5.6
-    container_name: spark-worker
-    env_file:
-    - ./.env
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark:7077
-      - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
-      - SPARK_EVENTLOG_ENABLED=true
-      - SPARK_EVENTLOG_DIR=file:///opt/spark/logs
-      - SPARK_LOG_DIR=/opt/spark/logs
-      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=file:///opt/spark/logs
-    volumes:
-      - ./src:/opt/spark-apps
-      - ./data/raw:/opt/spark-data/raw
-      - spark_logs:/opt/spark/logs
-    depends_on:
-      - spark
-    ports:
-      - "8082:8081"
-    networks:
-      - stock_data_net
-
-  minio:
-    image: minio/minio:latest
-    container_name: minio
-    env_file:
-      - ./.env
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - ./data/minio/:/data
-    networks:
-      - stock_data_net
-
-  mc:
-    image: minio/mc:latest
-    depends_on:
-      - minio
-    env_file:
-      - ./.env
-    entrypoint: >
-      /bin/sh -c "
-      sleep 5 &&
-      mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD &&
-      mc mb local/$MINIO_BUCKET || true &&
-      mc policy set download local/$MINIO_BUCKET
-      "
-    networks:
-      - stock_data_net
-
-  postgres:
-    image: postgres:15
-    container_name: postgres
+  warehouse-postgres:
+    image: postgres:15-alpine
+    container_name: warehouse-postgres
     restart: always
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -159,15 +13,107 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./src/utils/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      - stock_data_net
+      - stock_pipeline_net
+
+  airflow-init:
+    image: apache/airflow:2.9.2-python3.11
+    container_name: airflow-init
+    depends_on:
+      - warehouse-postgres
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@warehouse-postgres:5432/${POSTGRES_DB}
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - _PIP_ADDITIONAL_REQUIREMENTS=yfinance pandas psycopg2-binary duckdb sqlalchemy
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password admin
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./sql:/opt/airflow/sql
+    networks:
+      - stock_pipeline_net
+
+  airflow-webserver:
+    image: apache/airflow:2.9.2-python3.11
+    container_name: airflow-webserver
+    depends_on:
+      - warehouse-postgres
+    restart: always
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@warehouse-postgres:5432/${POSTGRES_DB}
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - _PIP_ADDITIONAL_REQUIREMENTS=yfinance pandas psycopg2-binary duckdb sqlalchemy
+      # For import resolution inside DAGs
+      - PYTHONPATH=/opt/airflow/src:/opt/airflow
+      # Configuration pass-throughs
+      - POSTGRES_HOST=warehouse-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - RAW_DATA_PATH=/opt/airflow/data/raw
+      - PROCESSED_DATA_PATH=/opt/airflow/data/processed
+      - STOCK_TICKERS=${STOCK_TICKERS}
+      - USE_LOCAL_DATA=${USE_LOCAL_DATA}
+    ports:
+      - "8080:8080"
+    command: webserver
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./sql:/opt/airflow/sql
+    networks:
+      - stock_pipeline_net
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.2-python3.11
+    container_name: airflow-scheduler
+    depends_on:
+      - warehouse-postgres
+    restart: always
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@warehouse-postgres:5432/${POSTGRES_DB}
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - _PIP_ADDITIONAL_REQUIREMENTS=yfinance pandas psycopg2-binary duckdb sqlalchemy
+      # For import resolution inside DAGs
+      - PYTHONPATH=/opt/airflow/src:/opt/airflow
+      # Configuration pass-throughs
+      - POSTGRES_HOST=warehouse-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - RAW_DATA_PATH=/opt/airflow/data/raw
+      - PROCESSED_DATA_PATH=/opt/airflow/data/processed
+      - STOCK_TICKERS=${STOCK_TICKERS}
+      - USE_LOCAL_DATA=${USE_LOCAL_DATA}
+    command: scheduler
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./sql:/opt/airflow/sql
+    networks:
+      - stock_pipeline_net
 
 volumes:
-  kafka_data:
-  spark_logs:
   postgres_data:
 
 networks:
-  stock_data_net:
+  stock_pipeline_net:
     driver: bridge
