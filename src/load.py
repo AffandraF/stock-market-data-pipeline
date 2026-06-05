@@ -125,7 +125,7 @@ def load_fact_indicators(df: pd.DataFrame, conn) -> None:
     with conn.cursor() as cur:
         execute_values(cur, query, indicator_records)
 
-def load_stock(ticker: str, processed_dir: str = PROCESSED_DATA_PATH) -> None:
+def load_stock(ticker: str, processed_dir: Path = PROCESSED_DATA_PATH) -> None:
     # Runs incremental or full data load for ticker.
     logger.info(f"Starting load process for ticker: {ticker}")
     input_path = os.path.join(processed_dir, f"{ticker}.parquet")

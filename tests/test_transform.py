@@ -76,7 +76,7 @@ def test_validator_logic(tmp_path) -> None:
     mock_data.to_parquet(raw_file, index=False)
     
     # Run validation
-    validate_stock(ticker, raw_dir=str(raw_dir))
+    validate_stock(ticker, raw_dir=raw_dir)
     
     validated_file = raw_dir / f"{ticker}_validated.parquet"
     assert validated_file.exists()

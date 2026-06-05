@@ -17,7 +17,7 @@ EXTRACTION_MODE = "csv"
 
 logger = get_logger("Extractor")
 
-def extract_stock(ticker: str, raw_dir: str = RAW_DATA_PATH) -> None:
+def extract_stock(ticker: str, raw_dir: Path = RAW_DATA_PATH) -> None:
     # Extracts stock data from API or CSV and saves as raw Parquet.
     mode = EXTRACTION_MODE.lower()
     if mode not in ("api", "csv"):

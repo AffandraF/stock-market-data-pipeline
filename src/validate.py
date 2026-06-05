@@ -11,7 +11,7 @@ from utils.config import RAW_DATA_PATH, STOCK_TICKERS
 
 logger = get_logger("Validator")
 
-def validate_stock(ticker: str, raw_dir: str = RAW_DATA_PATH) -> None:
+def validate_stock(ticker: str, raw_dir: Path = RAW_DATA_PATH) -> None:
     # Validates schema, nulls, duplicates, and business rules, then saves Parquet.
     logger.info(f"Starting validation for ticker: {ticker}")
     input_path = os.path.join(raw_dir, f"{ticker}.parquet")

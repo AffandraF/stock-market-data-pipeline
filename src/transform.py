@@ -55,7 +55,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-def transform_stock(ticker: str, raw_dir: str = RAW_DATA_PATH, processed_dir: str = PROCESSED_DATA_PATH) -> None:
+def transform_stock(ticker: str, raw_dir: Path = RAW_DATA_PATH, processed_dir: Path = PROCESSED_DATA_PATH) -> None:
     # Loads validated data, computes indicators, and saves as processed Parquet.
     logger.info(f"Starting transformation for ticker: {ticker}")
     input_path = os.path.join(raw_dir, f"{ticker}_validated.parquet")
