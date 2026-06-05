@@ -1,3 +1,7 @@
+-- Create Schema
+CREATE SCHEMA IF NOT EXISTS stock_data;
+SET search_path TO stock_data, public;
+
 -- Create Dimension Company Table
 CREATE TABLE IF NOT EXISTS dim_company (
     ticker VARCHAR(10) PRIMARY KEY,

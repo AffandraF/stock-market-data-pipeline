@@ -68,7 +68,6 @@ services:
       - RAW_DATA_PATH=/opt/airflow/data/raw
       - PROCESSED_DATA_PATH=/opt/airflow/data/processed
       - STOCK_TICKERS=${STOCK_TICKERS}
-      - USE_LOCAL_DATA=${USE_LOCAL_DATA}
     ports:
       - "8080:8080"
     command: webserver
@@ -103,7 +102,6 @@ services:
       - RAW_DATA_PATH=/opt/airflow/data/raw
       - PROCESSED_DATA_PATH=/opt/airflow/data/processed
       - STOCK_TICKERS=${STOCK_TICKERS}
-      - USE_LOCAL_DATA=${USE_LOCAL_DATA}
     command: scheduler
     volumes:
       - ./airflow/dags:/opt/airflow/dags

@@ -14,6 +14,9 @@ def get_db_connection():
             user=POSTGRES_USER,
             password=POSTGRES_PASSWORD
         )
+        # Set default schema search path to stock_data
+        with conn.cursor() as cur:
+            cur.execute("SET search_path TO stock_data, public;")
         return conn
     except Exception as e:
         logger.error(f"Failed to connect to PostgreSQL: {e}")

@@ -1,3 +1,5 @@
+SET search_path TO stock_data, public;
+
 -- Mart 1: Flat Stock Summary View (for BI tools and dashboarding)
 CREATE OR REPLACE VIEW mart_stock_summary AS
 SELECT 
