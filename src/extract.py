@@ -2,24 +2,26 @@ import os
 import pandas as pd
 import yfinance as yf
 from utils.logger import get_logger
-from utils.config import RAW_DATA_PATH, STOCK_TICKERS, USE_LOCAL_DATA
+from utils.config import RAW_DATA_PATH, STOCK_TICKERS, EXTRACTION_MODE
 
 logger = get_logger("Extractor")
 
 def extract_stock(ticker: str, raw_dir: str = RAW_DATA_PATH) -> None:
-    """
-    Extracts stock data for a given ticker from Yahoo Finance or CSV fallback,
-    and saves it as a raw Parquet file.
-    """
-    logger.info(f"Starting extraction for ticker: {ticker}")
+    # Extracts stock data from API or CSV and saves as raw Parquet.
+    mode = EXTRACTION_MODE.lower()
+    if mode not in ("api", "csv", "hybrid"):
+        logger.warning(f"Invalid extraction mode '{mode}' configured. Defaulting to 'hybrid'.")
+        mode = "hybrid"
+
+    logger.info(f"Starting extraction for ticker: {ticker} (Mode: {mode.upper()})")
     df = None
     
-    # Try downloading from yfinance first unless offline mode is explicitly requested
-    if not USE_LOCAL_DATA:
+    # 1. API Fetching (for 'api' or 'hybrid' modes)
+    if mode in ("api", "hybrid"):
         ticker_jk = f"{ticker}.JK"
         try:
             logger.info(f"Attempting to download data from Yahoo Finance for {ticker_jk}...")
-            # Download recent history (e.g., past 5 years to cover all historical data plus incremental)
+            # Download recent history (past 5 years)
             ticker_data = yf.Ticker(ticker_jk)
             df_downloaded = ticker_data.history(period="5y")
             
@@ -32,16 +34,20 @@ def extract_stock(ticker: str, raw_dir: str = RAW_DATA_PATH) -> None:
                 logger.info(f"Successfully downloaded {len(df)} rows from yfinance for {ticker}")
             else:
                 logger.warning(f"Yahoo Finance returned empty data for {ticker_jk}")
+                if mode == "api":
+                    raise ValueError(f"Yahoo Finance returned empty data for {ticker_jk} in API-only mode.")
                 
         except Exception as e:
-            logger.warning(f"Failed to fetch data from yfinance for {ticker}: {e}. Proceeding with CSV fallback.")
-    else:
-        logger.info("USE_LOCAL_DATA is set to True. Skipping yfinance download and forcing CSV dummy data usage.")
+            logger.warning(f"Failed to fetch data from yfinance for {ticker}: {e}.")
+            if mode == "api":
+                raise e
 
-
-    # Fallback to local CSV files if yfinance failed or returned empty
+    # 2. Local CSV Fetching (for 'csv' mode, or fallback in 'hybrid' mode)
     if df is None or df.empty:
-        logger.info(f"Using CSV fallback files for {ticker}...")
+        if mode == "api":
+            raise ValueError(f"Extraction failed for ticker {ticker}: API returned no data and fallback is disabled.")
+            
+        logger.info(f"Using CSV fallback/source files for {ticker}...")
         history_path = os.path.join(raw_dir, f"{ticker}_history.csv")
         kafka_path = os.path.join(raw_dir, f"{ticker}_kafka.csv")
         
@@ -62,7 +68,7 @@ def extract_stock(ticker: str, raw_dir: str = RAW_DATA_PATH) -> None:
             # Sort by Date ascending
             df = df.sort_values("Date").reset_index(drop=True)
         else:
-            raise FileNotFoundError(f"No source data found for ticker {ticker} (yfinance failed, and no CSV files exist)")
+            raise FileNotFoundError(f"No source data found for ticker {ticker} (no CSV files exist)")
 
     # Save raw data as Parquet file
     os.makedirs(raw_dir, exist_ok=True)
@@ -71,10 +77,8 @@ def extract_stock(ticker: str, raw_dir: str = RAW_DATA_PATH) -> None:
     logger.info(f"Successfully saved raw parquet to {output_path} ({len(df)} rows)")
 
 def extract_all() -> None:
-    """
-    Extracts all tickers configured in STOCK_TICKERS.
-    """
-    logger.info("Extracting all stock tickers...")
+    # Extracts all configured stock tickers.
+    logger.info(f"Extracting all stock tickers (Mode: {EXTRACTION_MODE.upper()})...")
     for ticker in STOCK_TICKERS:
         try:
             extract_stock(ticker)

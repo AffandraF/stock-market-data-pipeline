@@ -1,202 +1,134 @@
-# Stock Market Data Pipeline (Refactored)
+# Stock Market Data Pipeline
 
-An end-to-end production-oriented batch data engineering pipeline that extracts stock market data, validates schema and quality constraints, calculates technical indicators, and loads the processed results into a dimensional data warehouse.
+An end-to-end batch data pipeline that automates the collection, validation, transformation, and ingestion of stock market data into a PostgreSQL data warehouse.
 
-This project is designed to demonstrate data engineering best practices including **modular ETL architecture**, **dimensional modeling (Star Schema)**, **orchestration**, **data quality gates**, and **local OLAP analytics**.
+## Project Overview
 
----
+* **Problem**: Storing raw data in monolithic or unvalidated formats makes financial analysis slow and prone to errors. Traditional big data frameworks like Apache Spark are costly and over-engineered for small to medium-sized stock market datasets.
+* **Solution**: A lightweight, modular pipeline that downloads data from Yahoo Finance API (with local CSV fallback), validates data quality, computes technical indicators, and upserts data into a relational warehouse.
+* **Output**: A structured star-schema database in PostgreSQL, self-updating data marts for BI consumption, and processed Parquet files queryable via DuckDB.
 
-## 🚀 Refactored Architecture
+## Architecture
 
-The pipeline is refactored from an over-engineered big data stack (Prefect, Kafka, Spark, MinIO, Delta Lake) into a clean, highly maintainable, and cost-effective batch pipeline:
-
-```
-                      +-----------------------------+
-                      |  Yahoo Finance API / CSVs   |
-                      +--------------+--------------+
-                                     |
-                                     | [Extract] (yfinance API with CSV fallback)
-                                     v
-                      +-----------------------------+
-                      |      Raw Parquet Layer      |
-                      |   (data/raw/{ticker}.parquet)|
-                      +--------------+--------------+
-                                     |
-                                     | [Validation] (Schema, nulls, duplicates, bounds)
-                                     v
-                      +-----------------------------+
-                      |   Cleaned Parquet Layer     |
-                      | (_validated.parquet)        |
-                      +--------------+--------------+
-                                     |
-                                     | [Transform] (Pandas: SMA, EMA, RSI, MACD, BB)
-                                     v
-                      +-----------------------------+
-                      |   Processed Parquet Layer   |
-                      | (data/processed/{ticker}.pq)|
-                      +--------------+--------------+
-                                     |
-                                     | [Load] (Incremental Load / Upsert)
-                                     v
-                      +-----------------------------+
-                      |  PostgreSQL Data Warehouse  |
-                      | (Star Schema: Dim/Fact Table)|
-                      +--------------+--------------+
-                                     |
-                                     | [Analytics]
-                                     v
-                      +-----------------------------+
-                      |   DuckDB Analytics Layer    |
-                      +-----------------------------+
+```mermaid
+graph TD
+    A[Yahoo Finance API / CSVs] -->|Extract| B(Raw Parquet Layer)
+    B -->|Validate| C(Cleaned Parquet Layer)
+    C -->|Transform| D(Processed Parquet Layer)
+    D -->|Incremental Load| E[(PostgreSQL Data Warehouse)]
+    D -->|Direct Query| F[DuckDB Analytics Layer]
+    E -->|Marts Views| G[Data Marts / BI Dashboard]
 ```
 
-### Key Changes & Rationale:
-1. **Airflow (Orchestration)**: Replaced Prefect. Airflow is the industry standard, providing robust scheduling, task dependencies, retries, and a powerful dashboard.
-2. **Pandas (Processing)**: Replaced Apache Spark. Spark was severely over-engineered for megabyte-scale datasets. Pandas runs in milliseconds, utilizes negligible RAM, and simplifies indicator math.
-3. **Parquet Landing Zones**: Replaced MinIO & Delta Lake. Storing raw and processed stages as local Parquet files simplifies infrastructure while retaining optimized columnar storage.
-4. **PostgreSQL Star Schema**: Replaced a single flat table with a star schema design (`dim_company`, `dim_date`, `fact_stock_price`, `fact_stock_indicator`) to follow data warehousing best practices.
-5. **yfinance API with local CSV fallback**: Data is pulled directly from Yahoo Finance API. If offline or if the API is restricted, the pipeline automatically falls back to merging historical local CSVs.
-6. **DuckDB Analytics**: Integrated DuckDB to allow analysts to query processed Parquet files directly using SQL in milliseconds, bypassing the warehouse database.
+### Data Flow
+1. **Source to Raw**: Data is extracted from Yahoo Finance or local CSV fallbacks and saved as raw Parquet files.
+2. **Validation to Transform**: Raw Parquet files are checked for schema, duplicate records, null values, and numeric boundary violations.
+3. **Transform to Load**: Pandas computes rolling technical indicators before data is incrementally loaded (upserted) into the database.
+4. **Local OLAP**: DuckDB queries processed Parquet files directly, bypassing the database for quick analytics.
 
----
+## Tech Stack
 
-## 🛠️ Tech Stack
-- **Orchestration**: Apache Airflow
-- **Data Processing**: Pandas, NumPy
-- **Data Quality & Validation**: Custom Python validation gate
-- **Data Warehouse**: PostgreSQL (Docker-based)
-- **Local OLAP Analytics**: DuckDB
-- **Containerization**: Docker & Docker Compose
+| Technology | Purpose |
+| :--- | :--- |
+| Apache Airflow | Workflow orchestration, scheduling, and task monitoring |
+| Pandas & NumPy | Data manipulation, schema validation, and indicator calculations |
+| PostgreSQL | Primary data warehouse implementing a star schema |
+| DuckDB | Serverless local OLAP database for direct Parquet queries |
+| Docker & Docker Compose | Containerization of PostgreSQL and Apache Airflow |
+| Pytest | Automated unit testing for pipeline validations and calculations |
 
----
+## Pipeline Flow
 
-## 📁 Directory Structure
+* **Extraction**: Fetches data from Yahoo Finance API for configured tickers and saves them as raw Parquet files, with fallback to local CSVs.
+* **Transformation**: Standardizes schema types, drops duplicates, filters invalid values, and computes rolling technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands).
+* **Loading**: Sequentially loads the date dimension table and upserts price and indicator records into PostgreSQL fact tables using key constraints.
+* **Consumption**: Exposes database views (data marts) for BI dashboarding and supports local analytical SQL queries directly on Parquet files using DuckDB.
+
+## Project Structure
+
 ```
-stock-market-pipeline/
+stock-market-data-pipeline/
 ├── airflow/
-│   └── dags/
-│       └── stock_pipeline.py      # Airflow DAG definition
+│   └── dags/                  # Workflow configuration and DAGs
 ├── data/
-│   ├── raw/                       # Raw landing zone (CSVs & Parquet)
-│   └── processed/                 # Cleaned Parquet files with technical indicators
+│   ├── raw/                   # Landing zone for raw Parquet and CSV source files
+│   └── processed/             # Cleaned Parquet datasets with computed indicators
 ├── sql/
-│   ├── init_warehouse.sql         # Postgres star schema table creations & seeding
-│   └── marts.sql                  # PostgreSQL analytics views (marts)
+│   ├── init_warehouse.sql     # PostgreSQL warehouse schema definitions and seed data
+│   └── marts.sql              # Analytical views and data marts
 ├── src/
-│   ├── extract/
-│   │   └── extractor.py           # API downloader and CSV fallback merger
-│   ├── validate/
-│   │   └── validator.py           # Data quality check logic
-│   ├── transform/
-│   │   └── transformer.py         # Technical indicator calculator using Pandas
-│   ├── load/
-│   │   └── loader.py              # Incremental database loader (upserts)
-│   └── utils/
-│       ├── config.py              # Configuration manager via dotenv
-│       ├── db.py                  # Database connection utilities
-│       ├── logger.py              # Standardized application logging
-│       ├── init_db.py             # Automates SQL script execution
-│       ├── check_postgres.py      # Query verification utility
-│       └── duckdb_analytics.py    # Local DuckDB OLAP queries on Parquet
+│   ├── extract.py             # Data extraction and fallback logic
+│   ├── validate.py            # Quality gates and business boundary validation
+│   ├── transform.py           # Technical indicators calculator
+│   ├── load.py                # PostgreSQL incremental load processor
+│   └── analytics.py           # DuckDB direct-query analytics engine
 ├── tests/
-│   └── test_pipeline.py           # Unit tests (pytest)
-├── docker-compose.yml             # Orchestration container profiles
-├── requirements.txt               # Project dependencies
-└── README.md                      # Documentation
+│   └── test_pipeline.py       # Automated unit tests
+└── utils/
+    ├── config.py              # Configuration manager via dotenv
+    ├── db.py                  # Database connection helper
+    ├── logger.py              # Standardized console logging
+    ├── init_db.py             # Database initialization driver
+    ├── check_postgres.py      # PostgreSQL query verification utility
+    └── mart_verifier.py       # Database mart verification task
 ```
 
----
+## Data Model
 
-## 📊 Data Quality & Business Rules
-The **Validation Layer** enforces strict data quality gates:
-* **Schema Conformity**: Asserts that all required columns (`Date`, `Open`, `High`, `Low`, `Close`, `Volume`) are present and cast to correct numeric and date formats.
-* **Duplicate Prevention**: Detects and drops duplicate rows based on the `Date` column.
-* **Null Filtering**: Discards records with nulls in any required column.
-* **Business Boundary Checks**:
-  - Close Price must be strictly positive (`Close > 0`).
-  - Volume must be non-negative (`Volume >= 0`).
+| Table Name | Type | Description | Keys |
+| :--- | :--- | :--- | :--- |
+| `dim_company` | Dimension | Company sector and industry metadata | Primary Key: `ticker` |
+| `dim_date` | Dimension | Calendar attributes for temporal slicing | Primary Key: `date` |
+| `fact_stock_price` | Fact | Historical stock prices (Open, High, Low, Close, Volume) | Composite Key: `(date, ticker)` |
+| `fact_stock_indicator` | Fact | Computed technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands) | Composite Key: `(date, ticker)` |
+| `mart_stock_summary` | View (Mart) | Denormalized dataset combining prices, indicators, and company metadata | N/A |
 
----
+## Key Features
 
-## 📈 Technical Indicators Calculated
-Calculated on-the-fly in the **Transform Layer**:
-* **SMA 20 & SMA 50**: Simple Moving Averages.
-* **EMA 20**: Exponential Moving Average.
-* **RSI (14)**: Relative Strength Index.
-* **MACD**: Moving Average Convergence Divergence (EMA 12, EMA 26) along with the MACD Signal (EMA 9) and MACD Hist (Histogram).
-* **Bollinger Bands**: Standard 20-day window with upper and lower bands set at 2 standard deviations.
+* **Orchestration**: Uses Apache Airflow to handle task dependencies, scheduling, and automatic retries.
+* **Data Quality Gates**: Prevents duplicate records, null values, or incorrect numeric ranges from entering the warehouse.
+* **Incremental Ingestion**: Implements Postgres upserts (`ON CONFLICT DO UPDATE`) to load only new or updated records.
+* **Serverless Analytics**: Enables analytical SQL queries directly on local Parquet files via DuckDB without database performance overhead.
+* **Modular Codebase**: Decouples extract, validate, transform, and load steps into separate Python scripts for easy debugging and maintainability.
 
----
+## Results
 
-## 🗄️ Dimensional Model (Star Schema)
-Our PostgreSQL database implements a dimensional model configured as follows:
+* **Automation**: Eliminates manual daily updates by scheduling batch pipelines.
+* **Performance**: Direct local analytical querying executes in milliseconds using DuckDB.
+* **Cost Efficiency**: Runs on consumer hardware via Docker, avoiding cloud warehouse costs.
+* **Data Reliability**: Validates 100% of raw data, dropping corrupted or duplicate records automatically.
 
-- **`dim_company`** (Dimension Table): Stores ticker metadata (e.g., Sector, Industry, Name). Pre-seeded during initialization.
-- **`dim_date`** (Dimension Table): Denormalizes date fields (`day`, `month`, `year`, `quarter`, `day_of_week`, `is_weekend`) for high-performance temporal slicing.
-- **`fact_stock_price`** (Fact Table): Stores core price transactions (`open`, `high`, `low`, `close`, `volume`).
-- **`fact_stock_indicator`** (Fact Table): Stores corresponding computed technical indicators.
+## How to Run
 
-### Data Marts (Self-updating Views):
-- `mart_stock_summary`: A flat consolidated view suitable for dashboarding tools (PowerBI, Tableau).
-- `mart_weekly_summary`: Aggregates weekly performance metrics (weekly highs, lows, and volume).
-- `mart_technical_signals`: Implements business logic indicators (e.g., RSI overbought/oversold alerts, Bollinger breakout triggers).
-
----
-
-## ⚙️ Setup and Installation
-
-### Prerequisites:
-- **Docker** and **Docker Compose** installed.
-- **Python 3.10+** (if running tests or scripts locally).
-
-### Step 1: Clone the repository and configure `.env`
-```sh
+### Step 1: Initialize Configuration
+Clone the repository and ensure your `.env` file matches the database configuration:
+```bash
 git clone https://github.com/AffandraF/stock-market-data-pipeline.git
 cd stock-market-data-pipeline
 ```
-Verify the contents of your `.env` file (which should already be in your workspace):
-```env
-POSTGRES_DB=stockdb
-POSTGRES_USER=warehouse
-POSTGRES_PASSWORD=warehouse_password
-STOCK_TICKERS=ADRO,ANTM,ASII,BBCA,BBNI,BMRI,BRIS,PGAS,TLKM,UNTR
-```
 
-### Step 2: Spin up the containers
-This launches PostgreSQL and Apache Airflow services:
-```sh
+### Step 2: Spin Up Infrastructure
+Launch the PostgreSQL and Apache Airflow containers:
+```bash
 docker compose up -d
 ```
 
-### Step 3: Access Airflow Dashboard
-Open your browser and navigate to:
-- **URL**: `http://localhost:8080`
-- **Username**: `admin`
-- **Password**: `admin`
+### Step 3: Run the Pipeline
+Open the Apache Airflow dashboard at `http://localhost:8080` (Username: `admin`, Password: `admin`) and trigger the `stock_market_etl_pipeline` DAG.
 
-Trigger the `stock_market_etl_pipeline` DAG manually or let it run daily.
-
----
-
-## 🔍 Local Validation & Analytics
-
-### Run DuckDB Local OLAP Queries
-To run analytical SQL queries directly on the processed Parquet files (bypassing Postgres):
-```sh
-python src/utils/duckdb_analytics.py
+### Step 4: Run Analytics and Verification
+To query PostgreSQL database marts and export a summary CSV:
+```bash
+python utils/check_postgres.py
+```
+To run OLAP queries directly on Parquet files:
+```bash
+python src/analytics.py
 ```
 
-### Query PostgreSQL Data Marts
-To fetch data loaded in the warehouse database and save the flat table as a CSV file:
-```sh
-python src/utils/check_postgres.py
-```
-
----
-
-## 🧪 Unit Testing
-We use `pytest` to validate transformations and quality constraints. Run them locally:
-```sh
+### Step 5: Run Tests
+Execute the test suite locally:
+```bash
 pip install -r requirements.txt
 pytest tests/
 ```

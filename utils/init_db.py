@@ -5,9 +5,7 @@ from utils.db import get_db_connection
 logger = get_logger("InitDB")
 
 def run_sql_file(file_path: str, conn) -> None:
-    """
-    Executes a SQL file on the given database connection.
-    """
+    # Executes a SQL file on the database connection.
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"SQL file not found: {file_path}")
         
@@ -21,9 +19,7 @@ def run_sql_file(file_path: str, conn) -> None:
     logger.info(f"Successfully executed: {file_path}")
 
 def init_database() -> None:
-    """
-    Initializes the PostgreSQL database with schemas and views.
-    """
+    # Initializes database with schemas and views.
     conn = get_db_connection()
     try:
         # Run table creation
@@ -36,6 +32,11 @@ def init_database() -> None:
         raise
     finally:
         conn.close()
+
+def run_db_init() -> None:
+    # Airflow task to initialize tables and views.
+    logger.info("Initializing database schemas and marts views...")
+    init_database()
 
 if __name__ == "__main__":
     init_database()

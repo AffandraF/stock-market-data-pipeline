@@ -6,9 +6,7 @@ from utils.config import RAW_DATA_PATH, PROCESSED_DATA_PATH, STOCK_TICKERS
 logger = get_logger("Transformer")
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Calculates technical indicators (SMA 20/50, EMA 20, RSI 14, MACD, Bollinger Bands) for a stock dataframe.
-    """
+    # Computes technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands).
     df = df.copy()
     
     # Sort by date ascending to calculate rolling indicators correctly
@@ -52,10 +50,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def transform_stock(ticker: str, raw_dir: str = RAW_DATA_PATH, processed_dir: str = PROCESSED_DATA_PATH) -> None:
-    """
-    Reads validated raw stock data, standardizes columns, calculates indicators,
-    and saves the processed dataset as Parquet.
-    """
+    # Loads validated data, computes indicators, and saves as processed Parquet.
     logger.info(f"Starting transformation for ticker: {ticker}")
     input_path = os.path.join(raw_dir, f"{ticker}_validated.parquet")
     output_path = os.path.join(processed_dir, f"{ticker}.parquet")
@@ -82,9 +77,7 @@ def transform_stock(ticker: str, raw_dir: str = RAW_DATA_PATH, processed_dir: st
     logger.info(f"Successfully processed and saved transformed Parquet to {output_path} ({len(df_transformed)} rows)")
 
 def transform_all() -> None:
-    """
-    Transforms all tickers configured in STOCK_TICKERS.
-    """
+    # Transforms all configured stock tickers.
     logger.info("Transforming all validated stock files...")
     for ticker in STOCK_TICKERS:
         try:

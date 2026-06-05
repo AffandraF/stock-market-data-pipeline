@@ -9,10 +9,7 @@ from utils.config import PROCESSED_DATA_PATH, STOCK_TICKERS
 logger = get_logger("Loader")
 
 def get_last_loaded_date(ticker: str, conn) -> datetime.date:
-    """
-    Queries the database to find the maximum date loaded for the given ticker.
-    Returns None if no data is loaded yet.
-    """
+    # Gets latest loaded date for ticker, or None.
     query = "SELECT MAX(date) FROM fact_stock_price WHERE ticker = %s;"
     with conn.cursor() as cur:
         cur.execute(query, (ticker,))
@@ -22,9 +19,7 @@ def get_last_loaded_date(ticker: str, conn) -> datetime.date:
     return None
 
 def load_date_dimension(dates: list, conn) -> None:
-    """
-    Dynamically generates and inserts records into the dim_date dimension table.
-    """
+    # Generates and inserts records into dim_date.
     logger.info(f"Loading {len(dates)} dates into dim_date...")
     
     date_records = []
@@ -56,9 +51,7 @@ def load_date_dimension(dates: list, conn) -> None:
         execute_values(cur, query, date_records)
 
 def load_fact_prices(df: pd.DataFrame, conn) -> None:
-    """
-    Loads stock prices into the fact_stock_price table.
-    """
+    # Loads stock prices into fact_stock_price.
     logger.info(f"Loading {len(df)} rows into fact_stock_price...")
     
     # Prepare records as tuples, converting NaN to None for NULL insertion
@@ -88,9 +81,7 @@ def load_fact_prices(df: pd.DataFrame, conn) -> None:
         execute_values(cur, query, price_records)
 
 def load_fact_indicators(df: pd.DataFrame, conn) -> None:
-    """
-    Loads computed technical indicators into the fact_stock_indicator table.
-    """
+    # Loads technical indicators into fact_stock_indicator.
     logger.info(f"Loading {len(df)} rows into fact_stock_indicator...")
     
     indicator_records = []
@@ -129,10 +120,7 @@ def load_fact_indicators(df: pd.DataFrame, conn) -> None:
         execute_values(cur, query, indicator_records)
 
 def load_stock(ticker: str, processed_dir: str = PROCESSED_DATA_PATH) -> None:
-    """
-    Executes the load process for a single stock ticker.
-    Supports incremental loading by only inserting newer records.
-    """
+    # Runs incremental or full data load for ticker.
     logger.info(f"Starting load process for ticker: {ticker}")
     input_path = os.path.join(processed_dir, f"{ticker}.parquet")
     
@@ -183,9 +171,7 @@ def load_stock(ticker: str, processed_dir: str = PROCESSED_DATA_PATH) -> None:
         conn.close()
 
 def load_all() -> None:
-    """
-    Loads all tickers configured in STOCK_TICKERS.
-    """
+    # Loads all configured stock tickers.
     logger.info("Loading all processed stock files...")
     for ticker in STOCK_TICKERS:
         try:

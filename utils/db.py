@@ -5,9 +5,7 @@ from utils.config import POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USE
 logger = get_logger("DB")
 
 def get_db_connection():
-    """
-    Establishes and returns a psycopg2 database connection.
-    """
+    # Connects to PostgreSQL using psycopg2.
     try:
         conn = psycopg2.connect(
             host=POSTGRES_HOST,

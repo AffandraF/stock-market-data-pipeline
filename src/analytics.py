@@ -6,10 +6,7 @@ from utils.config import PROCESSED_DATA_PATH
 logger = get_logger("DuckDBAnalytics")
 
 def query_processed_parquet() -> None:
-    """
-    Demonstrates using DuckDB to query local processed Parquet files.
-    Calculates summary metrics directly from Parquet files without querying Postgres.
-    """
+    # Queries processed Parquet files and calculates summary metrics using DuckDB.
     logger.info("Initializing DuckDB connection and querying processed Parquet files...")
     
     # Path pattern matching all processed Parquet files

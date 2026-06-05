@@ -1,13 +1,11 @@
 import pytest
 import pandas as pd
 import numpy as np
-from src.validate.validator import validate_stock
-from src.transform.transformer import compute_indicators
+from src.validate import validate_stock
+from src.transform import compute_indicators
 
 def test_compute_indicators() -> None:
-    """
-    Tests technical indicators calculation on a dummy dataset.
-    """
+    # Tests technical indicator calculation on dummy data.
     # Create 60 days of mock stock data
     dates = pd.date_range(start="2026-01-01", periods=60).strftime("%Y-%m-%d")
     close_prices = [100.0 + i for i in range(60)]  # Steadily increasing close price
@@ -48,9 +46,7 @@ def test_compute_indicators() -> None:
     assert "bollinger_lower" in transformed_df.columns
 
 def test_validator_logic(tmp_path) -> None:
-    """
-    Tests the validation logic using temporary Parquet files.
-    """
+    # Tests validator logic using temporary Parquet files.
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
     

@@ -6,9 +6,7 @@ from utils.logger import get_logger
 logger = get_logger("CheckPostgres")
 
 def fetch_stock_summary() -> pd.DataFrame:
-    """
-    Fetches the flat stock summary from the mart_stock_summary view in PostgreSQL.
-    """
+    # Fetches stock summary from PostgreSQL mart_stock_summary.
     logger.info("Fetching flat stock summary from PostgreSQL...")
     conn = get_db_connection()
     try:

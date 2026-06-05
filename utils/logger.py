@@ -2,9 +2,7 @@ import logging
 import sys
 
 def get_logger(name: str) -> logging.Logger:
-    """
-    Creates and returns a standardized logger with console output.
-    """
+    # Returns a standardized console logger.
     logger = logging.getLogger(name)
     
     # Avoid duplicate handlers if logger is already configured

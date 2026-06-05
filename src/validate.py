@@ -6,10 +6,7 @@ from utils.config import RAW_DATA_PATH, STOCK_TICKERS
 logger = get_logger("Validator")
 
 def validate_stock(ticker: str, raw_dir: str = RAW_DATA_PATH) -> None:
-    """
-    Reads the raw stock Parquet file, performs schema, null, duplicate, and
-    business rules validations, and saves the cleaned data as a validated Parquet file.
-    """
+    # Validates schema, nulls, duplicates, and business rules, then saves Parquet.
     logger.info(f"Starting validation for ticker: {ticker}")
     input_path = os.path.join(raw_dir, f"{ticker}.parquet")
     output_path = os.path.join(raw_dir, f"{ticker}_validated.parquet")
@@ -80,9 +77,7 @@ def validate_stock(ticker: str, raw_dir: str = RAW_DATA_PATH) -> None:
     logger.info(f"Validated dataset saved to {output_path}")
 
 def validate_all() -> None:
-    """
-    Validates all tickers configured in STOCK_TICKERS.
-    """
+    # Validates all configured stock tickers.
     logger.info("Validating all raw stock files...")
     for ticker in STOCK_TICKERS:
         try:
