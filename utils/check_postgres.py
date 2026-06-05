@@ -1,5 +1,11 @@
 import os
 import pandas as pd
+from pathlib import Path
+import sys
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.append(str(BASE_DIR))
+
 from utils.db import get_db_connection
 from utils.logger import get_logger
 

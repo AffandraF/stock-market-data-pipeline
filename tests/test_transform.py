@@ -1,6 +1,12 @@
 import pytest
 import pandas as pd
 import numpy as np
+from pathlib import Path
+import sys
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.append(str(BASE_DIR))
+
 from src.validate import validate_stock
 from src.transform import compute_indicators
 

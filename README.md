@@ -61,7 +61,7 @@ stock-market-data-pipeline/
 │   ├── validate.py            # Quality gates and business boundary validation
 │   ├── transform.py           # Technical indicators calculator
 │   ├── load.py                # PostgreSQL incremental load processor
-│   └── analytics.py           # DuckDB direct-query analytics engine
+│   └── query_parquet.py       # DuckDB direct-query analytics engine
 ├── tests/
 │   └── test_pipeline.py       # Automated unit tests
 └── utils/
@@ -123,7 +123,7 @@ python utils/check_postgres.py
 ```
 To run OLAP queries directly on Parquet files:
 ```bash
-python src/analytics.py
+python src/query_parquet.py
 ```
 
 ### Step 5: Run Tests
