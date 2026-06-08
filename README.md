@@ -63,7 +63,7 @@ stock-market-data-pipeline/
 │   ├── load.py                # PostgreSQL incremental load processor
 │   └── query_parquet.py       # DuckDB direct-query analytics engine
 ├── tests/
-│   └── test_pipeline.py       # Automated unit tests
+│   └── test_transform.py      # Automated unit tests for transformation and validation logic
 └── utils/
     ├── config.py              # Configuration manager via dotenv
     ├── db.py                  # Database connection helper
@@ -82,11 +82,13 @@ stock-market-data-pipeline/
 | `fact_stock_price` | Fact | Historical stock prices (Open, High, Low, Close, Volume) | Composite Key: `(date, ticker)` |
 | `fact_stock_indicator` | Fact | Computed technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands) | Composite Key: `(date, ticker)` |
 | `mart_stock_summary` | View (Mart) | Denormalized dataset combining prices, indicators, and company metadata | N/A |
+| `mart_weekly_summary` | View (Mart) | Weekly performance metrics and aggregates | N/A |
+| `mart_technical_signals`| View (Mart) | Trading buy/sell trend signals based on RSI, Bollinger Bands, and MACD crossovers | N/A |
 
 ## Key Features
 
 * **Orchestration**: Uses Apache Airflow to handle task dependencies, scheduling, and automatic retries.
-* **Data Quality Gates**: Prevents duplicate records, null values, or incorrect numeric ranges from entering the warehouse.
+* **Data Quality Gates**: Automatically drops invalid records (e.g., duplicate dates, nulls in required columns, non-positive closing prices, or negative volume) to guarantee data warehouse integrity.
 * **Incremental Ingestion**: Implements Postgres upserts (`ON CONFLICT DO UPDATE`) to load only new or updated records.
 * **Serverless Analytics**: Enables analytical SQL queries directly on local Parquet files via DuckDB without database performance overhead.
 * **Modular Codebase**: Decouples extract, validate, transform, and load steps into separate Python scripts for easy debugging and maintainability.
@@ -119,6 +121,10 @@ Open the Apache Airflow dashboard at `http://localhost:8080` (Username: `admin`,
 ### Step 4: Run Analytics and Verification
 To query PostgreSQL database marts and export a summary CSV:
 ```bash
+# Set database host to localhost since warehouse-postgres is for the internal Docker network
+$env:POSTGRES_HOST="localhost"  # PowerShell (Windows)
+# or on Linux/macOS: export POSTGRES_HOST=localhost
+
 python utils/check_postgres.py
 ```
 To run OLAP queries directly on Parquet files:
